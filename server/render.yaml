@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: dota-notifier-server
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
