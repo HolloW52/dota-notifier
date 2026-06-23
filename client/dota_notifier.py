@@ -7,11 +7,19 @@ import pyautogui
 import requests
 from PIL import Image
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(SCRIPT_DIR, "config.json")
+if getattr(sys, "frozen", False):
+    # Собранный PyInstaller .exe: конфиг должен жить рядом с .exe (постоянно),
+    # а шаблоны кнопок распакованы во временную папку _MEIPASS (только на чтение).
+    APP_DIR = os.path.dirname(sys.executable)
+    BUNDLE_DIR = sys._MEIPASS
+else:
+    APP_DIR = os.path.dirname(os.path.abspath(__file__))
+    BUNDLE_DIR = APP_DIR
+
+CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 TEMPLATE_PATHS = [
-    os.path.join(SCRIPT_DIR, "accept_button_ru.png"),
-    os.path.join(SCRIPT_DIR, "accept_button_en.png"),
+    os.path.join(BUNDLE_DIR, "accept_button_ru.png"),
+    os.path.join(BUNDLE_DIR, "accept_button_en.png"),
 ]
 
 CHECK_INTERVAL_SECONDS = 1.0
@@ -32,7 +40,7 @@ def load_config():
         save_config(default_config)
         return default_config
 
-    with open(CONFIG_PATH, encoding="utf-8") as f:
+    with open(CONFIG_PATH, encoding="utf-8-sig") as f:
         return json.load(f)
 
 
@@ -48,7 +56,7 @@ def ensure_api_key(config):
     print("Это первый запуск — нужно привязать приложение к твоему Telegram.")
     print("1. Напиши /start боту @dota2_notify_bot в Telegram.")
     print("2. Бот пришлёт тебе персональный код.")
-    api_key = input("3. Вставь этот код сюда и нажми Enter: ").strip()
+    api_key = input("3. Вставь этот код сюда и нажми Enter: ").strip().strip("﻿")
 
     config["api_key"] = api_key
     save_config(config)
