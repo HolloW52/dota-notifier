@@ -19,7 +19,7 @@ MATCH_CONFIDENCE = 0.8
 
 # Адрес сервера-релея по умолчанию для нового конфига. Обновляется один раз
 # после деплоя сервера на Render — отдельный шаг настройки, не пользовательский ввод.
-DEFAULT_SERVER_URL = "https://ЗАМЕНИ-НА-АДРЕС-СЕРВЕРА.onrender.com"
+DEFAULT_SERVER_URL = "https://dota-notifier.onrender.com"
 
 
 def load_config():
