@@ -247,6 +247,16 @@ class DotaNotifierApp(ctk.CTk):
         else:
             self.auto_accept_switch.deselect()
 
+        ctk.CTkLabel(
+            settings,
+            text=(
+                "Может работать нестабильно в полноэкранном режиме (Fullscreen) — "
+                "в настройках видео Dota 2 выбери \"Оконный безрамочный\" режим."
+            ),
+            font=self._font(11, weight="normal"), text_color=text_color,
+            wraplength=340, justify="left",
+        ).pack(fill="x", padx=14, pady=(0, 6))
+
         delay_row = ctk.CTkFrame(settings, fg_color="transparent")
         delay_row.pack(fill="x", padx=14, pady=6)
         self.delay_value_label = ctk.CTkLabel(
