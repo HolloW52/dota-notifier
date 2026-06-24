@@ -1,6 +1,6 @@
+import hmac
+import hashlib
 import os
-import secrets
-import sqlite3
 import time
 
 import requests
@@ -9,7 +9,11 @@ from flask import Flask, jsonify, request
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "registrations.db")
+# Подписываем api_key тем же секретом, что и токен бота — отдельный секрет не
+# нужен. Так chat_id зашит прямо в ключе, и сервер не хранит вообще никакого
+# состояния — это переживает перезапуски/засыпание на бесплатном тарифе Render,
+# где файлы на диске не сохраняются между перезапусками контейнера.
+SIGNING_KEY = TELEGRAM_BOT_TOKEN.encode()
 
 RATE_LIMIT_SECONDS = 3
 _last_notify_at = {}
@@ -17,15 +21,22 @@ _last_notify_at = {}
 app = Flask(__name__)
 
 
-def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS registrations ("
-        "api_key TEXT PRIMARY KEY, "
-        "chat_id TEXT NOT NULL"
-        ")"
-    )
-    return conn
+def make_api_key(chat_id):
+    chat_id = str(chat_id)
+    signature = hmac.new(SIGNING_KEY, chat_id.encode(), hashlib.sha256).hexdigest()[:32]
+    return f"{chat_id}.{signature}"
+
+
+def verify_api_key(api_key):
+    try:
+        chat_id, signature = api_key.split(".", 1)
+    except ValueError:
+        return None
+
+    expected = hmac.new(SIGNING_KEY, chat_id.encode(), hashlib.sha256).hexdigest()[:32]
+    if not hmac.compare_digest(signature, expected):
+        return None
+    return chat_id
 
 
 def send_telegram_message(chat_id, text):
@@ -52,15 +63,7 @@ def telegram_webhook():
         return jsonify({"ok": True})
 
     if text.strip().lower().startswith("/start"):
-        api_key = secrets.token_urlsafe(16)
-        conn = get_db()
-        conn.execute(
-            "INSERT INTO registrations (api_key, chat_id) VALUES (?, ?)",
-            (api_key, str(chat_id)),
-        )
-        conn.commit()
-        conn.close()
-
+        api_key = make_api_key(chat_id)
         send_telegram_message(
             chat_id,
             "Привет! Вот твой персональный код для приложения Dota 2 Notifier:\n\n"
@@ -88,16 +91,10 @@ def notify():
         return jsonify({"ok": False, "error": "Слишком частые запросы, подожди немного"}), 429
     _last_notify_at[api_key] = now
 
-    conn = get_db()
-    row = conn.execute(
-        "SELECT chat_id FROM registrations WHERE api_key = ?", (api_key,)
-    ).fetchone()
-    conn.close()
-
-    if row is None:
+    chat_id = verify_api_key(api_key)
+    if chat_id is None:
         return jsonify({"ok": False, "error": "Неизвестный api_key"}), 404
 
-    chat_id = row[0]
     send_telegram_message(chat_id, message)
     return jsonify({"ok": True})
 

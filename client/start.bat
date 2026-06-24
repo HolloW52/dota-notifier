@@ -1,4 +1,4 @@
 @echo off
 cd /d "%~dp0"
-python dota_notifier.py
+DotaNotifier.exe
 pause
