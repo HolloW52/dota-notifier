@@ -36,7 +36,7 @@ CANCEL_COLOR_HOVER = "#bf4d4d"
 # чтобы не выглядело сплошной серой стеной.
 ACCENT_COLOR = "#267340"
 
-MAIN_TAB_BG_IMAGE_SIZE = (420, 540)
+MAIN_TAB_BG_IMAGE_SIZE = (420, 600)
 
 # Окно принятия игры в Dota 2 — 30 секунд. Опрос экрана раз в секунду
 # добавляет до ~1 сек задержки на обнаружение, поэтому максимум выбора
@@ -133,7 +133,7 @@ class DotaNotifierApp(ctk.CTk):
 
         ctk.set_appearance_mode("dark")
         self.title("Dota 2 Notifier")
-        self.geometry("440x640")
+        self.geometry("440x700")
         self.resizable(False, False)
 
         self.tabview = ctk.CTkTabview(self)
@@ -238,10 +238,10 @@ class DotaNotifierApp(ctk.CTk):
         )
         self.cancel_button.pack(pady=(0, 10))
 
-        settings = ctk.CTkFrame(content, fg_color=panel_color, corner_radius=10)
-        settings.pack(fill="x", padx=20, pady=16)
+        auto_accept_card = ctk.CTkFrame(content, fg_color=panel_color, corner_radius=10)
+        auto_accept_card.pack(fill="x", padx=20, pady=(16, 8))
 
-        switch_row = ctk.CTkFrame(settings, fg_color="transparent")
+        switch_row = ctk.CTkFrame(auto_accept_card, fg_color="transparent")
         switch_row.pack(fill="x", padx=14, pady=(14, 6))
         ctk.CTkLabel(switch_row, text="Автопринятие", font=self._font(14), text_color=text_color).pack(side="left")
         self.auto_accept_switch = ctk.CTkSwitch(
@@ -254,25 +254,26 @@ class DotaNotifierApp(ctk.CTk):
             self.auto_accept_switch.deselect()
 
         ctk.CTkLabel(
-            settings,
+            auto_accept_card,
             text=(
                 "Может работать нестабильно в полноэкранном режиме (Fullscreen) — "
                 "в настройках видео Dota 2 выбери \"Оконный безрамочный\" режим."
             ),
             font=self._font(11, weight="normal"), text_color=text_color,
             wraplength=340, justify="left",
-        ).pack(fill="x", padx=14, pady=(0, 6))
+        ).pack(fill="x", padx=14, pady=(0, 14))
 
-        delay_row = ctk.CTkFrame(settings, fg_color="transparent")
-        delay_row.pack(fill="x", padx=14, pady=6)
+        delay_card = ctk.CTkFrame(content, fg_color=panel_color, corner_radius=10)
+        delay_card.pack(fill="x", padx=20, pady=(8, 16))
+
         self.delay_value_label = ctk.CTkLabel(
-            delay_row,
+            delay_card,
             text=f"Задержка перед автопринятием: {self.config_data.get('auto_accept_delay_seconds', 3)} сек",
             font=self._font(14), text_color=text_color,
         )
-        self.delay_value_label.pack(anchor="w")
+        self.delay_value_label.pack(anchor="w", padx=14, pady=(14, 6))
         self.delay_slider = ctk.CTkSlider(
-            settings, from_=0, to=MAX_DELAY_SECONDS, number_of_steps=MAX_DELAY_SECONDS,
+            delay_card, from_=0, to=MAX_DELAY_SECONDS, number_of_steps=MAX_DELAY_SECONDS,
             progress_color=text_color, button_color=text_color, button_hover_color=text_color,
             command=self._on_delay_change,
         )
@@ -280,7 +281,7 @@ class DotaNotifierApp(ctk.CTk):
         self.delay_slider.pack(fill="x", padx=14, pady=(0, 4))
 
         ctk.CTkLabel(
-            settings,
+            delay_card,
             text=f"Максимум {MAX_DELAY_SECONDS} сек — в Dota 2 всего 30 сек на принятие игры, остальное запас на надёжность.",
             font=self._font(11, weight="normal"), text_color=text_color,
             wraplength=340, justify="left",
