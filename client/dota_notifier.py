@@ -31,7 +31,28 @@ DEFAULT_SERVER_URL = "https://dota-notifier.onrender.com"
 CANCEL_COLOR = "#a13d3d"
 CANCEL_COLOR_HOVER = "#bf4d4d"
 
+# Зелёный из иконки приложения — используется как тонкий акцент у заголовка,
+# чтобы не выглядело сплошной серой стеной.
+ACCENT_COLOR = "#267340"
+
 MAIN_TAB_BG_IMAGE_SIZE = (420, 540)
+
+
+def panel_shade(hex_color, amount=0.12):
+    """Возвращает оттенок панели, контрастный к фону: светлее на тёмном фоне,
+    темнее на светлом — чтобы карточки визуально отделялись от фона."""
+    hex_color = hex_color.lstrip("#")
+    r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
+    luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+    if luminance < 0.5:
+        r = min(255, int(r + (255 - r) * amount))
+        g = min(255, int(g + (255 - g) * amount))
+        b = min(255, int(b + (255 - b) * amount))
+    else:
+        r = int(r * (1 - amount))
+        g = int(g * (1 - amount))
+        b = int(b * (1 - amount))
+    return f"#{r:02x}{g:02x}{b:02x}"
 
 # Шрифты ограничены тем, что обычно уже есть в Windows — без бандла своих
 # .ttf и регистрации их через WinAPI, что для этой задачи избыточно.
@@ -131,11 +152,13 @@ class DotaNotifierApp(ctk.CTk):
 
         bg_color = self.config_data["bg_color"]
         text_color = self.config_data["text_color"]
+        panel_color = panel_shade(bg_color)
         bg_image_path = self.config_data.get("background_image_path", "")
         has_bg_image = bool(bg_image_path) and os.path.isfile(bg_image_path)
 
+        self.main_tab.configure(fg_color=bg_color)
         content_master = self.main_tab
-        header_color = bg_color
+        header_color = panel_color
 
         if has_bg_image:
             try:
@@ -163,28 +186,32 @@ class DotaNotifierApp(ctk.CTk):
         else:
             content.place(relx=0, rely=0, relwidth=1, relheight=1)
 
-        header = ctk.CTkFrame(content, fg_color=header_color, corner_radius=0)
-        header.pack(fill="x")
+        header = ctk.CTkFrame(
+            content, fg_color=header_color, corner_radius=14,
+            border_width=0 if has_bg_image else 2, border_color=ACCENT_COLOR,
+        )
+        header.pack(fill="x", padx=20, pady=(16, 0))
         ctk.CTkLabel(
             header, text="DOTA 2", font=self._font(28), text_color=text_color,
         ).pack(pady=(16, 0))
         ctk.CTkLabel(
-            header, text="NOTIFIER", font=self._font(16), text_color=text_color,
+            header, text="NOTIFIER", font=self._font(16), text_color=ACCENT_COLOR if not has_bg_image else text_color,
         ).pack(pady=(0, 16))
 
         self.status_label = ctk.CTkLabel(
-            content, text="Запуск...", font=self._font(15),
-            text_color=text_color, fg_color=bg_color,
+            content, text="Запуск...", font=self._font(15), corner_radius=10,
+            text_color=text_color, fg_color=panel_color,
         )
-        self.status_label.pack(pady=(16, 4), fill="x")
+        self.status_label.pack(pady=(16, 4), padx=20, fill="x")
 
         self.log_box = ctk.CTkTextbox(
-            content, height=150, fg_color=bg_color, text_color=text_color, font=self._font(13, weight="normal"),
+            content, height=150, corner_radius=10,
+            fg_color=panel_color, text_color=text_color, font=self._font(13, weight="normal"),
         )
         self.log_box.pack(fill="x", padx=20, pady=4)
         self.log_box.configure(state="disabled")
 
-        self.countdown_frame = ctk.CTkFrame(content, fg_color=bg_color)
+        self.countdown_frame = ctk.CTkFrame(content, fg_color=panel_color, corner_radius=10)
         self.countdown_label = ctk.CTkLabel(
             self.countdown_frame, text="", font=self._font(16), text_color=text_color,
         )
@@ -195,7 +222,7 @@ class DotaNotifierApp(ctk.CTk):
         )
         self.cancel_button.pack(pady=(0, 10))
 
-        settings = ctk.CTkFrame(content, fg_color=bg_color)
+        settings = ctk.CTkFrame(content, fg_color=panel_color, corner_radius=10)
         settings.pack(fill="x", padx=20, pady=16)
 
         switch_row = ctk.CTkFrame(settings, fg_color="transparent")
@@ -234,9 +261,11 @@ class DotaNotifierApp(ctk.CTk):
 
         bg_color = self.config_data["bg_color"]
         text_color = self.config_data["text_color"]
+        panel_color = panel_shade(bg_color)
 
-        container = ctk.CTkFrame(self.connect_tab, fg_color=bg_color)
-        container.pack(fill="both", expand=True)
+        self.connect_tab.configure(fg_color=bg_color)
+        container = ctk.CTkFrame(self.connect_tab, fg_color=panel_color, corner_radius=14)
+        container.pack(fill="both", expand=True, padx=16, pady=16)
 
         ctk.CTkLabel(
             container, text="Код подключения", font=self._font(18), text_color=text_color,
@@ -266,9 +295,11 @@ class DotaNotifierApp(ctk.CTk):
 
         bg_color = self.config_data["bg_color"]
         text_color = self.config_data["text_color"]
+        panel_color = panel_shade(bg_color)
 
-        container = ctk.CTkFrame(self.appearance_tab, fg_color=bg_color)
-        container.pack(fill="both", expand=True)
+        self.appearance_tab.configure(fg_color=bg_color)
+        container = ctk.CTkFrame(self.appearance_tab, fg_color=panel_color, corner_radius=14)
+        container.pack(fill="both", expand=True, padx=16, pady=16)
 
         ctk.CTkLabel(container, text="Цвет фона", font=self._font(14), text_color=text_color).pack(anchor="w", padx=20, pady=(20, 4))
         row1 = ctk.CTkFrame(container, fg_color="transparent")
