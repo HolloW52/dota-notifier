@@ -1,5 +1,6 @@
 {
   "server_url": "https://dota-notifier.onrender.com",
   "api_key": "",
-  "auto_accept": true
+  "auto_accept": true,
+  "auto_accept_delay_seconds": 3
 }

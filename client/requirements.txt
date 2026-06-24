@@ -1,0 +1,7 @@
+pyautogui==0.9.54
+opencv-python==4.13.0.92
+pillow==10.4.0
+requests==2.32.3
+customtkinter==5.2.2
+pystray==0.19.5
+pyinstaller==6.21.0

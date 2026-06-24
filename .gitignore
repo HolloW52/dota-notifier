@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 client/config.json
+client/dota_notifier.log
 client/build/
 client/dist/
 client/*.spec
