@@ -36,7 +36,7 @@ CANCEL_COLOR_HOVER = "#bf4d4d"
 # чтобы не выглядело сплошной серой стеной.
 ACCENT_COLOR = "#267340"
 
-MAIN_TAB_BG_IMAGE_SIZE = (420, 600)
+MAIN_TAB_BG_IMAGE_SIZE = (420, 540)
 
 # Окно принятия игры в Dota 2 — 30 секунд. Опрос экрана раз в секунду
 # добавляет до ~1 сек задержки на обнаружение, поэтому максимум выбора
@@ -130,10 +130,12 @@ class DotaNotifierApp(ctk.CTk):
         self.event_queue = queue.Queue()
         self.tray_icon = None
         self._bg_image_ref = None
+        self._help_popup = None
+        self._help_popup_owner = None
 
         ctk.set_appearance_mode("dark")
         self.title("Dota 2 Notifier")
-        self.geometry("440x700")
+        self.geometry("440x640")
         self.resizable(False, False)
 
         self.tabview = ctk.CTkTabview(self)
@@ -159,6 +161,55 @@ class DotaNotifierApp(ctk.CTk):
     def _font(self, size, weight="bold"):
         family = self.config_data.get("font_family", DEFAULT_FONT_FAMILY)
         return ctk.CTkFont(family=family, size=size, weight=weight)
+
+    def _make_help_button(self, parent, help_text):
+        button = ctk.CTkButton(
+            parent, text="?", width=22, height=22, corner_radius=11,
+            font=self._font(12), fg_color=ACCENT_COLOR, hover_color=self._lighten_accent(),
+            text_color="#ffffff",
+        )
+        button.configure(command=lambda: self._toggle_help_popup(button, help_text))
+        return button
+
+    @staticmethod
+    def _lighten_accent():
+        return panel_shade(ACCENT_COLOR, amount=0.25)
+
+    def _toggle_help_popup(self, button, text):
+        existing = self._help_popup
+        same_button = self._help_popup_owner is button
+        if existing is not None:
+            try:
+                existing.destroy()
+            except Exception:
+                pass
+            self._help_popup = None
+            self._help_popup_owner = None
+            if same_button:
+                return
+
+        bg_color = self.config_data["bg_color"]
+        text_color = self.config_data["text_color"]
+
+        popup = ctk.CTkToplevel(self)
+        popup.overrideredirect(True)
+        popup.attributes("-topmost", True)
+        frame = ctk.CTkFrame(popup, fg_color=panel_shade(bg_color), corner_radius=8, border_width=1, border_color=ACCENT_COLOR)
+        frame.pack()
+        ctk.CTkLabel(
+            frame, text=text, font=self._font(11, weight="normal"), text_color=text_color,
+            wraplength=260, justify="left",
+        ).pack(padx=12, pady=10)
+        popup.bind("<Button-1>", lambda e: self._toggle_help_popup(button, text))
+
+        button.update_idletasks()
+        x = button.winfo_rootx()
+        y = button.winfo_rooty() + button.winfo_height() + 4
+        popup.update_idletasks()
+        popup.geometry(f"+{x}+{y}")
+
+        self._help_popup = popup
+        self._help_popup_owner = button
 
     # ---------- Главная вкладка ----------
 
@@ -242,8 +293,13 @@ class DotaNotifierApp(ctk.CTk):
         auto_accept_card.pack(fill="x", padx=20, pady=(16, 8))
 
         switch_row = ctk.CTkFrame(auto_accept_card, fg_color="transparent")
-        switch_row.pack(fill="x", padx=14, pady=(14, 6))
+        switch_row.pack(fill="x", padx=14, pady=14)
         ctk.CTkLabel(switch_row, text="Автопринятие", font=self._font(14), text_color=text_color).pack(side="left")
+        self._make_help_button(
+            switch_row,
+            "Может работать нестабильно в полноэкранном режиме (Fullscreen) — "
+            "в настройках видео Dota 2 выбери \"Оконный безрамочный\" режим.",
+        ).pack(side="left", padx=(6, 0))
         self.auto_accept_switch = ctk.CTkSwitch(
             switch_row, text="", progress_color=text_color, command=self._on_toggle_auto_accept,
         )
@@ -253,39 +309,28 @@ class DotaNotifierApp(ctk.CTk):
         else:
             self.auto_accept_switch.deselect()
 
-        ctk.CTkLabel(
-            auto_accept_card,
-            text=(
-                "Может работать нестабильно в полноэкранном режиме (Fullscreen) — "
-                "в настройках видео Dota 2 выбери \"Оконный безрамочный\" режим."
-            ),
-            font=self._font(11, weight="normal"), text_color=text_color,
-            wraplength=340, justify="left",
-        ).pack(fill="x", padx=14, pady=(0, 14))
-
         delay_card = ctk.CTkFrame(content, fg_color=panel_color, corner_radius=10)
         delay_card.pack(fill="x", padx=20, pady=(8, 16))
 
+        delay_header_row = ctk.CTkFrame(delay_card, fg_color="transparent")
+        delay_header_row.pack(fill="x", padx=14, pady=(14, 6))
         self.delay_value_label = ctk.CTkLabel(
-            delay_card,
+            delay_header_row,
             text=f"Задержка перед автопринятием: {self.config_data.get('auto_accept_delay_seconds', 3)} сек",
             font=self._font(14), text_color=text_color,
         )
-        self.delay_value_label.pack(anchor="w", padx=14, pady=(14, 6))
+        self.delay_value_label.pack(side="left")
+        self._make_help_button(
+            delay_header_row,
+            f"Максимум {MAX_DELAY_SECONDS} сек — в Dota 2 всего 30 сек на принятие игры, остальное запас на надёжность.",
+        ).pack(side="left", padx=(6, 0))
         self.delay_slider = ctk.CTkSlider(
             delay_card, from_=0, to=MAX_DELAY_SECONDS, number_of_steps=MAX_DELAY_SECONDS,
             progress_color=text_color, button_color=text_color, button_hover_color=text_color,
             command=self._on_delay_change,
         )
         self.delay_slider.set(self.config_data.get("auto_accept_delay_seconds", 3))
-        self.delay_slider.pack(fill="x", padx=14, pady=(0, 4))
-
-        ctk.CTkLabel(
-            delay_card,
-            text=f"Максимум {MAX_DELAY_SECONDS} сек — в Dota 2 всего 30 сек на принятие игры, остальное запас на надёжность.",
-            font=self._font(11, weight="normal"), text_color=text_color,
-            wraplength=340, justify="left",
-        ).pack(fill="x", padx=14, pady=(0, 14))
+        self.delay_slider.pack(fill="x", padx=14, pady=(0, 14))
 
     # ---------- Вкладка "Подключение" ----------
 
