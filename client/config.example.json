@@ -2,5 +2,8 @@
   "server_url": "https://dota-notifier.onrender.com",
   "api_key": "",
   "auto_accept": true,
-  "auto_accept_delay_seconds": 3
+  "auto_accept_delay_seconds": 3,
+  "bg_color": "#808080",
+  "text_color": "#ffffff",
+  "background_image_path": ""
 }
