@@ -1,3 +1,4 @@
+import ctypes
 import datetime
 import json
 import os
@@ -66,7 +67,16 @@ FONT_CHOICES = [
     "Verdana",
     "Calibri",
 ]
-DEFAULT_FONT_FAMILY = "Segoe UI Semibold"
+DEFAULT_FONT_FAMILY = "Arial Black"
+
+
+def short_path(path):
+    """Возвращает короткий путь (8.3) без кириллицы — Tcl/Tk на Windows
+    плохо работает с кириллицей в пути для iconbitmap (как и было раньше
+    с OpenCV)."""
+    buf = ctypes.create_unicode_buffer(260)
+    result = ctypes.windll.kernel32.GetShortPathNameW(path, buf, 260)
+    return buf.value if result else path
 
 
 def default_config():
@@ -342,9 +352,18 @@ class DotaNotifierApp(ctk.CTk):
         ).pack(anchor="w", padx=20, pady=(28, 10))
 
     def _apply_icon(self):
-        # iconbitmap() принимает путь к файлу, а Tcl/Tk на Windows плохо
-        # работает с кириллицей в пути (как и было с OpenCV) — поэтому
-        # загружаем картинку через PIL и передаём готовый объект.
+        # iconphoto() с PNG задаёт только "маленькую" иконку (заголовок
+        # окна) — Windows для панели задач берёт "большую" иконку именно
+        # из .ico. iconbitmap() с кириллицей в пути не работает (как и
+        # было с OpenCV), поэтому передаём короткий путь без кириллицы.
+        ico_path = os.path.join(BUNDLE_DIR, "app_icon.ico")
+        if os.path.isfile(ico_path):
+            try:
+                self.iconbitmap(short_path(ico_path))
+                return
+            except Exception:
+                pass
+
         png_path = os.path.join(BUNDLE_DIR, "tray_icon.png")
         if os.path.isfile(png_path):
             try:
