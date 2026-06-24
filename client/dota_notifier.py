@@ -38,6 +38,12 @@ ACCENT_COLOR = "#267340"
 
 MAIN_TAB_BG_IMAGE_SIZE = (420, 540)
 
+# Окно принятия игры в Dota 2 — 30 секунд. Опрос экрана раз в секунду
+# добавляет до ~1 сек задержки на обнаружение, поэтому максимум выбора
+# ограничен 25 секундами — оставляет запас, чтобы клик гарантированно
+# успевал до закрытия окна, даже если система притормозит.
+MAX_DELAY_SECONDS = 25
+
 
 def panel_shade(hex_color, amount=0.12):
     """Возвращает оттенок панели, контрастный к фону: светлее на тёмном фоне,
@@ -266,12 +272,19 @@ class DotaNotifierApp(ctk.CTk):
         )
         self.delay_value_label.pack(anchor="w")
         self.delay_slider = ctk.CTkSlider(
-            settings, from_=0, to=20, number_of_steps=20,
+            settings, from_=0, to=MAX_DELAY_SECONDS, number_of_steps=MAX_DELAY_SECONDS,
             progress_color=text_color, button_color=text_color, button_hover_color=text_color,
             command=self._on_delay_change,
         )
         self.delay_slider.set(self.config_data.get("auto_accept_delay_seconds", 3))
-        self.delay_slider.pack(fill="x", padx=14, pady=(0, 14))
+        self.delay_slider.pack(fill="x", padx=14, pady=(0, 4))
+
+        ctk.CTkLabel(
+            settings,
+            text=f"Максимум {MAX_DELAY_SECONDS} сек — в Dota 2 всего 30 сек на принятие игры, остальное запас на надёжность.",
+            font=self._font(11, weight="normal"), text_color=text_color,
+            wraplength=340, justify="left",
+        ).pack(fill="x", padx=14, pady=(0, 14))
 
     # ---------- Вкладка "Подключение" ----------
 
