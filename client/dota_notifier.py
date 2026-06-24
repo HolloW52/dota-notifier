@@ -13,6 +13,8 @@ from PIL import Image, ImageTk
 
 import monitor
 
+APP_VERSION = "1.0.0"
+
 if getattr(sys, "frozen", False):
     APP_DIR = os.path.dirname(sys.executable)
     BUNDLE_DIR = sys._MEIPASS
@@ -134,7 +136,7 @@ class DotaNotifierApp(ctk.CTk):
         self._help_popup_owner = None
 
         ctk.set_appearance_mode("dark")
-        self.title("Dota 2 Notifier")
+        self.title(f"Dota 2 Notifier v{APP_VERSION}")
         self.geometry("440x640")
         self.resizable(False, False)
 
@@ -622,7 +624,7 @@ class DotaNotifierApp(ctk.CTk):
             pystray.MenuItem("Показать окно", self._on_tray_show, default=True),
             pystray.MenuItem("Выход", self._on_tray_quit),
         )
-        self.tray_icon = pystray.Icon("DotaNotifier", image, "Dota 2 Notifier", menu)
+        self.tray_icon = pystray.Icon("DotaNotifier", image, f"Dota 2 Notifier v{APP_VERSION}", menu)
         threading.Thread(target=self.tray_icon.run, daemon=True).start()
 
     def _hide_to_tray(self):
