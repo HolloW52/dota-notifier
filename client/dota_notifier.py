@@ -157,6 +157,7 @@ class DotaNotifierApp(ctk.CTk):
 
         self.protocol("WM_DELETE_WINDOW", self._hide_to_tray)
         self.after(150, self._poll_queue)
+        self.bind_all("<Button-1>", self._on_global_click, add="+")
 
     def _font(self, size, weight="bold"):
         family = self.config_data.get("font_family", DEFAULT_FONT_FAMILY)
@@ -176,31 +177,37 @@ class DotaNotifierApp(ctk.CTk):
         return panel_shade(ACCENT_COLOR, amount=0.25)
 
     def _toggle_help_popup(self, button, text):
-        existing = self._help_popup
+        had_popup = self._help_popup is not None
         same_button = self._help_popup_owner is button
-        if existing is not None:
-            try:
-                existing.destroy()
-            except Exception:
-                pass
-            self._help_popup = None
-            self._help_popup_owner = None
-            if same_button:
-                return
+        self._close_help_popup()
+        if had_popup and same_button:
+            return
+        self._open_help_popup(button, text)
 
+    def _open_help_popup(self, button, text):
         bg_color = self.config_data["bg_color"]
         text_color = self.config_data["text_color"]
+        # Toplevel сам по себе всегда прямоугольный — углы вокруг скруглённой
+        # карточки иначе остаются чёрными. "-transparentcolor" (Windows-only
+        # атрибут Tk) делает все пиксели этого цвета по-настоящему прозрачными,
+        # так что видно содержимое за окном, а не чёрную подложку.
+        sentinel_color = "#fe01fe"
 
         popup = ctk.CTkToplevel(self)
         popup.overrideredirect(True)
         popup.attributes("-topmost", True)
+        popup.configure(fg_color=sentinel_color)
+        try:
+            popup.attributes("-transparentcolor", sentinel_color)
+        except Exception:
+            pass
+
         frame = ctk.CTkFrame(popup, fg_color=panel_shade(bg_color), corner_radius=8, border_width=1, border_color=ACCENT_COLOR)
         frame.pack()
         ctk.CTkLabel(
             frame, text=text, font=self._font(11, weight="normal"), text_color=text_color,
             wraplength=260, justify="left",
         ).pack(padx=12, pady=10)
-        popup.bind("<Button-1>", lambda e: self._toggle_help_popup(button, text))
 
         button.update_idletasks()
         x = button.winfo_rootx()
@@ -210,6 +217,30 @@ class DotaNotifierApp(ctk.CTk):
 
         self._help_popup = popup
         self._help_popup_owner = button
+
+    def _close_help_popup(self):
+        popup = self._help_popup
+        self._help_popup = None
+        self._help_popup_owner = None
+        if popup is not None:
+            try:
+                popup.destroy()
+            except Exception:
+                pass
+
+    def _on_global_click(self, event):
+        if self._help_popup is None:
+            return
+        owner = self._help_popup_owner
+        if owner is not None:
+            try:
+                ox, oy = owner.winfo_rootx(), owner.winfo_rooty()
+                ow, oh = owner.winfo_width(), owner.winfo_height()
+                if ox <= event.x_root <= ox + ow and oy <= event.y_root <= oy + oh:
+                    return  # клик по самой кнопке — toggle обработает её command
+            except Exception:
+                pass
+        self._close_help_popup()
 
     # ---------- Главная вкладка ----------
 
