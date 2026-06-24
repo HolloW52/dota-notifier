@@ -50,16 +50,16 @@ def draw_icon(size):
 
 def main():
     sizes = [16, 32, 48, 64, 128, 256]
-    images = [draw_icon(s) for s in sizes]
+
+    # Один источник высокого качества (256, уже сглаженный суперсэмплингом) —
+    # Pillow сам аккуратно уменьшает его под остальные размеры при сохранении
+    # ICO. Попытка вручную подсунуть отдельно отрисованные размеры через
+    # append_images давала файл, который разные программы читали по-разному
+    # (один размер открывался даже как случайный шум).
+    source = draw_icon(256)
 
     ico_path = os.path.join(SCRIPT_DIR, "app_icon.ico")
-    # append_images — иначе Pillow растягивает только САМУЮ БОЛЬШУЮ картинку
-    # под остальные размеры, игнорируя уже отдельно отрисованные версии.
-    images[-1].save(
-        ico_path, format="ICO",
-        sizes=[(s, s) for s in sizes],
-        append_images=images[:-1],
-    )
+    source.save(ico_path, format="ICO", sizes=[(s, s) for s in sizes])
     print(f"Сохранено: {ico_path}")
 
     tray_path = os.path.join(SCRIPT_DIR, "tray_icon.png")
