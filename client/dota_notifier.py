@@ -202,7 +202,10 @@ class DotaNotifierApp(ctk.CTk):
         except Exception:
             pass
 
-        frame = ctk.CTkFrame(popup, fg_color=panel_shade(bg_color), corner_radius=8, border_width=1, border_color=ACCENT_COLOR)
+        # corner_radius=0: со скруглением сглаживание на границе подмешивает
+        # sentinel_color к цвету карточки, и эта смесь уже не совпадает с
+        # ключом прозрачности точно — остаётся видимая цветная кайма.
+        frame = ctk.CTkFrame(popup, fg_color=panel_shade(bg_color), corner_radius=0, border_width=1, border_color=ACCENT_COLOR)
         frame.pack()
         ctk.CTkLabel(
             frame, text=text, font=self._font(11, weight="normal"), text_color=text_color,
