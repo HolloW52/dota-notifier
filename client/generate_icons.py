@@ -10,8 +10,10 @@ GREEN = (38, 115, 64, 255)
 WHITE = (255, 255, 255, 255)
 
 # Рисуем в N раз крупнее целевого размера и уменьшаем с качественным
-# фильтром — обычное рисование PIL без суперсэмплинга даёт рваные/мутные
-# края у скруглений и текста на маленьких размерах.
+# фильтром. Важно делать это для КАЖДОГО размера отдельно с одним и тем же
+# (умеренным) коэффициентом — если вместо этого уменьшать один большой
+# источник (например, 256 -> 16, в 16 раз за один шаг), результат выходит
+# мыльным даже с хорошим фильтром.
 SUPERSAMPLE = 8
 
 
@@ -25,7 +27,13 @@ def load_font(size):
 
 
 def draw_icon(size):
-    big = size * SUPERSAMPLE
+    # На маленьких размерах (как раз то, что видно на панели задач) сглаживание
+    # шрифта само выглядит как размытие — там физически не хватает пикселей,
+    # чтобы антиалиасинг читался как "гладкое", а не "мутное". Поэтому для
+    # таких размеров рисуем без суперсэмплинга — прямо в целевом размере,
+    # жёсткими краями. Крупным размерам суперсэмплинг всё ещё идёт на пользу.
+    supersample = 1 if size <= 32 else SUPERSAMPLE
+    big = size * supersample
     image = Image.new("RGBA", (big, big), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
 
@@ -35,7 +43,9 @@ def draw_icon(size):
         fill=GREEN,
     )
 
-    font = load_font(int(big * 0.62))
+    # Чуть крупнее буква — на маленьких размерах разборчивость важнее точных
+    # пропорций.
+    font = load_font(int(big * 0.7))
     text = "N"
     bbox = draw.textbbox((0, 0), text, font=font)
     text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
@@ -45,22 +55,39 @@ def draw_icon(size):
         font=font,
         fill=WHITE,
     )
+    if supersample == 1:
+        return image
     return image.resize((size, size), Image.LANCZOS)
 
 
 def main():
-    sizes = [16, 32, 48, 64, 128, 256]
-
-    # Один источник высокого качества (256, уже сглаженный суперсэмплингом) —
-    # Pillow сам аккуратно уменьшает его под остальные размеры при сохранении
-    # ICO. Попытка вручную подсунуть отдельно отрисованные размеры через
-    # append_images давала файл, который разные программы читали по-разному
-    # (один размер открывался даже как случайный шум).
-    source = draw_icon(256)
+    # 256 не включаем: ICO-формат хранит этот размер как встроенный PNG
+    # по особым правилам, и именно с ним предыдущая сборка через
+    # append_images выходила структурно нестандартной (PIL читал файл
+    # нормально, но строгий .NET-парсер — нет). Панели задач/заголовку
+    # окна 128 более чем достаточно.
+    sizes = [16, 24, 32, 48, 64, 128]
+    images = [draw_icon(s) for s in sizes]
 
     ico_path = os.path.join(SCRIPT_DIR, "app_icon.ico")
-    source.save(ico_path, format="ICO", sizes=[(s, s) for s in sizes])
+    images[-1].save(
+        ico_path, format="ICO",
+        sizes=[(s, s) for s in sizes],
+        append_images=images[:-1],
+    )
     print(f"Сохранено: {ico_path}")
+
+    # Проверка валидности на месте — чтобы не словить сюрприз только после
+    # пересборки .exe.
+    check = Image.open(ico_path)
+    found_sizes = check.info.get("sizes", set())
+    missing = set((s, s) for s in sizes) - found_sizes
+    if missing:
+        raise RuntimeError(f"В .ico не хватает размеров: {missing}")
+    for s in found_sizes:
+        check.size = s
+        check.load()
+    print(f"Проверено, размеры читаются: {sorted(found_sizes)}")
 
     tray_path = os.path.join(SCRIPT_DIR, "tray_icon.png")
     draw_icon(64).save(tray_path, format="PNG")
