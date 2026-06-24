@@ -33,6 +33,20 @@ CANCEL_COLOR_HOVER = "#bf4d4d"
 
 MAIN_TAB_BG_IMAGE_SIZE = (420, 540)
 
+# Шрифты ограничены тем, что обычно уже есть в Windows — без бандла своих
+# .ttf и регистрации их через WinAPI, что для этой задачи избыточно.
+FONT_CHOICES = [
+    "Segoe UI Semibold",
+    "Segoe UI Black",
+    "Segoe UI",
+    "Arial Black",
+    "Bahnschrift",
+    "Trebuchet MS",
+    "Verdana",
+    "Calibri",
+]
+DEFAULT_FONT_FAMILY = "Segoe UI Semibold"
+
 
 def default_config():
     return {
@@ -40,9 +54,10 @@ def default_config():
         "api_key": "",
         "auto_accept": True,
         "auto_accept_delay_seconds": 3,
-        "bg_color": "#808080",
+        "bg_color": "#1e1e1e",
         "text_color": "#ffffff",
         "background_image_path": "",
+        "font_family": DEFAULT_FONT_FAMILY,
     }
 
 
@@ -87,9 +102,12 @@ class DotaNotifierApp(ctk.CTk):
         self.tabview = ctk.CTkTabview(self)
         self.tabview.pack(fill="both", expand=True, padx=8, pady=8)
         self.main_tab = self.tabview.add("Главная")
+        self.connect_tab = self.tabview.add("Подключение")
         self.appearance_tab = self.tabview.add("Оформление")
+        self.tabview.set("Главная")
 
         self._build_main_tab()
+        self._build_connect_tab()
         self._build_appearance_tab()
         self._apply_window_colors()
         self._apply_icon()
@@ -100,6 +118,10 @@ class DotaNotifierApp(ctk.CTk):
 
         self.protocol("WM_DELETE_WINDOW", self._hide_to_tray)
         self.after(150, self._poll_queue)
+
+    def _font(self, size, weight="bold"):
+        family = self.config_data.get("font_family", DEFAULT_FONT_FAMILY)
+        return ctk.CTkFont(family=family, size=size, weight=weight)
 
     # ---------- Главная вкладка ----------
 
@@ -144,30 +166,32 @@ class DotaNotifierApp(ctk.CTk):
         header = ctk.CTkFrame(content, fg_color=header_color, corner_radius=0)
         header.pack(fill="x")
         ctk.CTkLabel(
-            header, text="DOTA 2", font=ctk.CTkFont(size=26, weight="bold"), text_color=text_color,
+            header, text="DOTA 2", font=self._font(28), text_color=text_color,
         ).pack(pady=(16, 0))
         ctk.CTkLabel(
-            header, text="NOTIFIER", font=ctk.CTkFont(size=15, weight="bold"), text_color=text_color,
+            header, text="NOTIFIER", font=self._font(16), text_color=text_color,
         ).pack(pady=(0, 16))
 
         self.status_label = ctk.CTkLabel(
-            content, text="Запуск...", font=ctk.CTkFont(size=15, weight="bold"),
+            content, text="Запуск...", font=self._font(15),
             text_color=text_color, fg_color=bg_color,
         )
         self.status_label.pack(pady=(16, 4), fill="x")
 
-        self.log_box = ctk.CTkTextbox(content, height=150, fg_color=bg_color, text_color=text_color)
+        self.log_box = ctk.CTkTextbox(
+            content, height=150, fg_color=bg_color, text_color=text_color, font=self._font(13, weight="normal"),
+        )
         self.log_box.pack(fill="x", padx=20, pady=4)
         self.log_box.configure(state="disabled")
 
         self.countdown_frame = ctk.CTkFrame(content, fg_color=bg_color)
         self.countdown_label = ctk.CTkLabel(
-            self.countdown_frame, text="", font=ctk.CTkFont(size=16, weight="bold"), text_color=text_color,
+            self.countdown_frame, text="", font=self._font(16), text_color=text_color,
         )
         self.countdown_label.pack(pady=(10, 4))
         self.cancel_button = ctk.CTkButton(
-            self.countdown_frame, text="Отмена", fg_color=CANCEL_COLOR, hover_color=CANCEL_COLOR_HOVER,
-            text_color="#ffffff", command=self._on_cancel_countdown,
+            self.countdown_frame, text="Отмена", font=self._font(13), fg_color=CANCEL_COLOR,
+            hover_color=CANCEL_COLOR_HOVER, text_color="#ffffff", command=self._on_cancel_countdown,
         )
         self.cancel_button.pack(pady=(0, 10))
 
@@ -176,7 +200,7 @@ class DotaNotifierApp(ctk.CTk):
 
         switch_row = ctk.CTkFrame(settings, fg_color="transparent")
         switch_row.pack(fill="x", padx=14, pady=(14, 6))
-        ctk.CTkLabel(switch_row, text="Автопринятие", text_color=text_color).pack(side="left")
+        ctk.CTkLabel(switch_row, text="Автопринятие", font=self._font(14), text_color=text_color).pack(side="left")
         self.auto_accept_switch = ctk.CTkSwitch(
             switch_row, text="", progress_color=text_color, command=self._on_toggle_auto_accept,
         )
@@ -191,7 +215,7 @@ class DotaNotifierApp(ctk.CTk):
         self.delay_value_label = ctk.CTkLabel(
             delay_row,
             text=f"Задержка перед автопринятием: {self.config_data.get('auto_accept_delay_seconds', 3)} сек",
-            text_color=text_color,
+            font=self._font(14), text_color=text_color,
         )
         self.delay_value_label.pack(anchor="w")
         self.delay_slider = ctk.CTkSlider(
@@ -202,21 +226,35 @@ class DotaNotifierApp(ctk.CTk):
         self.delay_slider.set(self.config_data.get("auto_accept_delay_seconds", 3))
         self.delay_slider.pack(fill="x", padx=14, pady=(0, 14))
 
-        connect_row = ctk.CTkFrame(settings, fg_color="transparent")
-        connect_row.pack(fill="x", padx=14, pady=(0, 14))
+    # ---------- Вкладка "Подключение" ----------
+
+    def _build_connect_tab(self):
+        for child in self.connect_tab.winfo_children():
+            child.destroy()
+
+        bg_color = self.config_data["bg_color"]
+        text_color = self.config_data["text_color"]
+
+        container = ctk.CTkFrame(self.connect_tab, fg_color=bg_color)
+        container.pack(fill="both", expand=True)
+
         ctk.CTkLabel(
-            connect_row,
-            text="Код подключения (напиши /start боту @dota2_notify_bot):",
-            text_color=text_color, wraplength=370, justify="left",
-        ).pack(anchor="w")
-        entry_row = ctk.CTkFrame(connect_row, fg_color="transparent")
-        entry_row.pack(fill="x", pady=(6, 0))
-        self.api_key_entry = ctk.CTkEntry(entry_row, placeholder_text="Вставь код сюда")
+            container, text="Код подключения", font=self._font(18), text_color=text_color,
+        ).pack(anchor="w", padx=20, pady=(24, 4))
+        ctk.CTkLabel(
+            container,
+            text="Напиши /start боту @dota2_notify_bot в Telegram, он пришлёт код — вставь его сюда.",
+            font=self._font(13, weight="normal"), text_color=text_color, wraplength=380, justify="left",
+        ).pack(anchor="w", padx=20, pady=(0, 14))
+
+        entry_row = ctk.CTkFrame(container, fg_color="transparent")
+        entry_row.pack(fill="x", padx=20)
+        self.api_key_entry = ctk.CTkEntry(entry_row, placeholder_text="Вставь код сюда", font=self._font(13, weight="normal"))
         self.api_key_entry.pack(side="left", fill="x", expand=True)
         if self.config_data.get("api_key"):
             self.api_key_entry.insert(0, self.config_data["api_key"])
         ctk.CTkButton(
-            entry_row, text="OK", width=50, fg_color=text_color, text_color=bg_color,
+            entry_row, text="OK", width=50, font=self._font(13), fg_color=text_color, text_color=bg_color,
             command=self._on_save_api_key,
         ).pack(side="left", padx=(8, 0))
 
@@ -232,31 +270,43 @@ class DotaNotifierApp(ctk.CTk):
         container = ctk.CTkFrame(self.appearance_tab, fg_color=bg_color)
         container.pack(fill="both", expand=True)
 
-        ctk.CTkLabel(container, text="Цвет фона", text_color=text_color).pack(anchor="w", padx=20, pady=(20, 4))
+        ctk.CTkLabel(container, text="Цвет фона", font=self._font(14), text_color=text_color).pack(anchor="w", padx=20, pady=(20, 4))
         row1 = ctk.CTkFrame(container, fg_color="transparent")
         row1.pack(fill="x", padx=20)
         ctk.CTkFrame(row1, fg_color=bg_color, width=36, height=28, border_width=1, border_color=text_color).pack(side="left")
-        ctk.CTkButton(row1, text="Выбрать цвет фона", fg_color=text_color, text_color=bg_color, command=self._on_pick_bg_color).pack(side="left", padx=(10, 0))
+        ctk.CTkButton(row1, text="Выбрать цвет фона", font=self._font(13), fg_color=text_color, text_color=bg_color, command=self._on_pick_bg_color).pack(side="left", padx=(10, 0))
 
-        ctk.CTkLabel(container, text="Цвет текста", text_color=text_color).pack(anchor="w", padx=20, pady=(20, 4))
+        ctk.CTkLabel(container, text="Цвет текста", font=self._font(14), text_color=text_color).pack(anchor="w", padx=20, pady=(20, 4))
         row2 = ctk.CTkFrame(container, fg_color="transparent")
         row2.pack(fill="x", padx=20)
         ctk.CTkFrame(row2, fg_color=text_color, width=36, height=28, border_width=1, border_color=text_color).pack(side="left")
-        ctk.CTkButton(row2, text="Выбрать цвет текста", fg_color=text_color, text_color=bg_color, command=self._on_pick_text_color).pack(side="left", padx=(10, 0))
+        ctk.CTkButton(row2, text="Выбрать цвет текста", font=self._font(13), fg_color=text_color, text_color=bg_color, command=self._on_pick_text_color).pack(side="left", padx=(10, 0))
 
-        ctk.CTkLabel(container, text="Фоновая картинка (на вкладке «Главная»)", text_color=text_color).pack(anchor="w", padx=20, pady=(28, 4))
+        ctk.CTkLabel(container, text="Шрифт", font=self._font(14), text_color=text_color).pack(anchor="w", padx=20, pady=(20, 4))
+        self.font_menu = ctk.CTkOptionMenu(
+            container, values=FONT_CHOICES, font=self._font(13),
+            fg_color=text_color, text_color=bg_color, button_color=text_color, button_hover_color=text_color,
+            dropdown_font=self._font(13), command=self._on_pick_font,
+        )
+        self.font_menu.set(self.config_data.get("font_family", DEFAULT_FONT_FAMILY))
+        self.font_menu.pack(anchor="w", padx=20)
+
+        ctk.CTkLabel(
+            container, text="Фоновая картинка (на вкладке «Главная»)", font=self._font(14), text_color=text_color,
+        ).pack(anchor="w", padx=20, pady=(28, 4))
         row3 = ctk.CTkFrame(container, fg_color="transparent")
         row3.pack(fill="x", padx=20)
-        ctk.CTkButton(row3, text="Выбрать фото...", fg_color=text_color, text_color=bg_color, command=self._on_pick_background_image).pack(side="left")
-        ctk.CTkButton(row3, text="Убрать фото", fg_color=CANCEL_COLOR, hover_color=CANCEL_COLOR_HOVER, text_color="#ffffff", command=self._on_clear_background_image).pack(side="left", padx=(10, 0))
+        ctk.CTkButton(row3, text="Выбрать фото...", font=self._font(13), fg_color=text_color, text_color=bg_color, command=self._on_pick_background_image).pack(side="left")
+        ctk.CTkButton(row3, text="Убрать фото", font=self._font(13), fg_color=CANCEL_COLOR, hover_color=CANCEL_COLOR_HOVER, text_color="#ffffff", command=self._on_clear_background_image).pack(side="left", padx=(10, 0))
 
         current_image = self.config_data.get("background_image_path") or "не выбрана"
         ctk.CTkLabel(
-            container, text=f"Текущая: {current_image}", text_color=text_color, wraplength=380, justify="left",
+            container, text=f"Текущая: {current_image}", font=self._font(12, weight="normal"),
+            text_color=text_color, wraplength=380, justify="left",
         ).pack(anchor="w", padx=20, pady=(8, 4))
 
         ctk.CTkButton(
-            container, text="Сбросить оформление по умолчанию", fg_color=CANCEL_COLOR,
+            container, text="Сбросить оформление по умолчанию", font=self._font(13), fg_color=CANCEL_COLOR,
             hover_color=CANCEL_COLOR_HOVER, text_color="#ffffff", command=self._on_reset_appearance,
         ).pack(anchor="w", padx=20, pady=(28, 10))
 
@@ -280,6 +330,7 @@ class DotaNotifierApp(ctk.CTk):
 
     def _refresh_theme(self):
         self._build_main_tab()
+        self._build_connect_tab()
         self._build_appearance_tab()
         self._apply_window_colors()
 
@@ -298,6 +349,11 @@ class DotaNotifierApp(ctk.CTk):
             self.config_data["text_color"] = color
             self._persist()
             self._refresh_theme()
+
+    def _on_pick_font(self, value):
+        self.config_data["font_family"] = value
+        self._persist()
+        self._refresh_theme()
 
     def _on_pick_background_image(self):
         path = filedialog.askopenfilename(
@@ -319,6 +375,7 @@ class DotaNotifierApp(ctk.CTk):
         self.config_data["bg_color"] = defaults["bg_color"]
         self.config_data["text_color"] = defaults["text_color"]
         self.config_data["background_image_path"] = ""
+        self.config_data["font_family"] = defaults["font_family"]
         self._persist()
         self._refresh_theme()
 
