@@ -48,6 +48,10 @@ def load_find_match_templates():
     return load_image_templates(["find_match_button_ru.png", "find_match_button_en.png"])
 
 
+def load_party_invite_templates():
+    return load_image_templates(["party_invite_accept_ru.png", "party_invite_accept_en.png"])
+
+
 def find_button(templates):
     for template in templates:
         try:
@@ -99,6 +103,7 @@ class MonitorWorker(threading.Thread):
         self.templates = load_templates()
         self.play_templates = load_play_templates()
         self.find_match_templates = load_find_match_templates()
+        self.party_invite_templates = load_party_invite_templates()
 
     def stop(self):
         self._stop_flag.set()
@@ -116,6 +121,7 @@ class MonitorWorker(threading.Thread):
 
         self._emit("status", text="Слежу за экраном...")
         button_was_visible = False
+        party_invite_was_visible = False
         tick = 0
 
         while not self._stop_flag.is_set():
@@ -127,11 +133,36 @@ class MonitorWorker(threading.Thread):
 
             button_was_visible = button_is_visible
 
+            party_invite_was_visible = self._check_party_invite(party_invite_was_visible)
+
             tick += 1
             if tick % COMMAND_POLL_EVERY_TICKS == 0:
                 self._check_pending_command()
 
             time.sleep(POLL_INTERVAL_SECONDS)
+
+    def _check_party_invite(self, was_visible):
+        """Возвращает новое состояние видимости — вызывающий код хранит его
+        между тиками, как и для кнопки Accept, чтобы не кликать по одному и
+        тому же всплывающему приглашению повторно, пока оно не исчезнет."""
+        if not self.party_invite_templates:
+            return False
+
+        config = self.get_config()
+        if not config.get("auto_accept_party_invite", False):
+            return False
+
+        location = find_button(self.party_invite_templates)
+        is_visible = location is not None
+
+        if is_visible and not was_visible:
+            pyautogui.click(pyautogui.center(location))
+            server_url = config["server_url"].rstrip("/")
+            api_key = config.get("api_key", "")
+            self._notify(server_url, api_key, "🎉 Заявка в пати принята автоматически.")
+            self._emit("status", text="Слежу за экраном...")
+
+        return is_visible
 
     def _check_pending_command(self):
         if not self.play_templates or not self.find_match_templates:

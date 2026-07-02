@@ -13,7 +13,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageTk
 
 import monitor
 
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 
 if getattr(sys, "frozen", False):
     APP_DIR = os.path.dirname(sys.executable)
@@ -145,6 +145,10 @@ def default_config():
         "api_key": "",
         "auto_accept": True,
         "auto_accept_delay_seconds": 3,
+        # Выключено по умолчанию: в отличие от принятия уже найденного матча,
+        # это молча принимает ЛЮБОЕ приглашение в пати без разбора, кто зовёт —
+        # осознанный выбор пользователя, не то, что должно включаться само.
+        "auto_accept_party_invite": False,
         "bg_color": "#1e1e1e",
         "text_color": "#ffffff",
         "background_image_path": "",
@@ -190,7 +194,7 @@ class DotaNotifierApp(ctk.CTk):
 
         ctk.set_appearance_mode("dark")
         self.title(f"Dota 2 Notifier v{APP_VERSION}")
-        self.geometry("440x640")
+        self.geometry("440x730")
         self.resizable(False, False)
 
         self.tabview = ctk.CTkTabview(self, corner_radius=14)
@@ -483,7 +487,7 @@ class DotaNotifierApp(ctk.CTk):
 
         switch_row = ctk.CTkFrame(auto_accept_card, fg_color="transparent")
         switch_row.pack(fill="x", padx=14, pady=14)
-        ctk.CTkLabel(switch_row, text="🔁 Автопринятие", font=self._font(14), text_color=text_color).pack(side="left")
+        ctk.CTkLabel(switch_row, text="🔁 Автопринятие игры", font=self._font(14), text_color=text_color).pack(side="left")
         self._make_help_button(
             switch_row,
             "Может работать нестабильно в полноэкранном режиме (Fullscreen) — "
@@ -527,6 +531,29 @@ class DotaNotifierApp(ctk.CTk):
         )
         self.delay_slider.set(self.config_data.get("auto_accept_delay_seconds", 3))
         self.delay_slider.pack(fill="x", padx=14, pady=(0, 14))
+
+        party_card = ctk.CTkFrame(content, fg_color=panel_color, corner_radius=10)
+        party_card.pack(fill="x", padx=20, pady=(0, 16))
+
+        party_row = ctk.CTkFrame(party_card, fg_color="transparent")
+        party_row.pack(fill="x", padx=14, pady=14)
+        ctk.CTkLabel(party_row, text="🎉 Автопринятие в пати", font=self._font(14), text_color=text_color).pack(side="left")
+        self._make_help_button(
+            party_row,
+            "Автоматически принимает ЛЮБОЕ приглашение в пати от друзей в Dota 2, "
+            "не дожидаясь тебя за компьютером. Не различает, кто именно зовёт — "
+            "включай, только если это не проблема.",
+        ).pack(side="left", padx=(6, 0))
+        self.party_invite_switch = ctk.CTkSwitch(
+            party_row, text="", progress_color=ACCENT_COLOR, button_color=text_color,
+            button_hover_color=text_color, command=self._on_toggle_party_invite,
+            bg_color=panel_color, width=46, height=24, switch_width=46, switch_height=24,
+        )
+        self.party_invite_switch.pack(side="right")
+        if self.config_data.get("auto_accept_party_invite", False):
+            self.party_invite_switch.select()
+        else:
+            self.party_invite_switch.deselect()
 
     # ---------- Вкладка "Подключение" ----------
 
@@ -714,6 +741,10 @@ class DotaNotifierApp(ctk.CTk):
 
     def _on_toggle_auto_accept(self):
         self.config_data["auto_accept"] = bool(self.auto_accept_switch.get())
+        self._persist()
+
+    def _on_toggle_party_invite(self):
+        self.config_data["auto_accept_party_invite"] = bool(self.party_invite_switch.get())
         self._persist()
 
     def _on_delay_change(self, value):
