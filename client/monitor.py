@@ -11,6 +11,14 @@ MATCH_CONFIDENCE = 0.8
 POLL_INTERVAL_SECONDS = 1.0
 COUNTDOWN_TICK_SECONDS = 1.0
 
+# Команда из Telegram опрашивается реже скрина — это просто лёгкий GET к
+# серверу, незачем дёргать его раз в секунду на каждого пользователя.
+COMMAND_POLL_EVERY_TICKS = 5
+
+# Сколько ждём появления кнопки "Найти игру" после команды из Telegram —
+# даём время вручную открыть Dota 2 и дойти до главного меню.
+FIND_MATCH_TIMEOUT_SECONDS = 60
+
 
 def get_bundle_dir():
     if getattr(sys, "frozen", False):
@@ -18,17 +26,26 @@ def get_bundle_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 
-def load_templates():
+def load_image_templates(filenames):
     bundle_dir = get_bundle_dir()
-    template_paths = [
-        os.path.join(bundle_dir, "accept_button_ru.png"),
-        os.path.join(bundle_dir, "accept_button_en.png"),
-    ]
     templates = []
-    for path in template_paths:
+    for filename in filenames:
+        path = os.path.join(bundle_dir, filename)
         if os.path.isfile(path):
             templates.append(Image.open(path))
     return templates
+
+
+def load_templates():
+    return load_image_templates(["accept_button_ru.png", "accept_button_en.png"])
+
+
+def load_play_templates():
+    return load_image_templates(["play_button_ru.png", "play_button_en.png"])
+
+
+def load_find_match_templates():
+    return load_image_templates(["find_match_button_ru.png", "find_match_button_en.png"])
 
 
 def find_button(templates):
@@ -40,6 +57,20 @@ def find_button(templates):
         if location is not None:
             return location
     return None
+
+
+def poll_pending_command(server_url, api_key):
+    try:
+        response = requests.get(
+            f"{server_url}/poll-command",
+            params={"api_key": api_key},
+            timeout=10,
+        )
+        if response.status_code != 200:
+            return None
+        return response.json().get("command")
+    except requests.RequestException:
+        return None
 
 
 def send_notification(server_url, api_key, message):
@@ -66,6 +97,8 @@ class MonitorWorker(threading.Thread):
         self._stop_flag = threading.Event()
         self._cancel_countdown_flag = threading.Event()
         self.templates = load_templates()
+        self.play_templates = load_play_templates()
+        self.find_match_templates = load_find_match_templates()
 
     def stop(self):
         self._stop_flag.set()
@@ -83,6 +116,7 @@ class MonitorWorker(threading.Thread):
 
         self._emit("status", text="Слежу за экраном...")
         button_was_visible = False
+        tick = 0
 
         while not self._stop_flag.is_set():
             location = find_button(self.templates)
@@ -92,7 +126,60 @@ class MonitorWorker(threading.Thread):
                 self._handle_found(location)
 
             button_was_visible = button_is_visible
+
+            tick += 1
+            if tick % COMMAND_POLL_EVERY_TICKS == 0:
+                self._check_pending_command()
+
             time.sleep(POLL_INTERVAL_SECONDS)
+
+    def _check_pending_command(self):
+        if not self.play_templates or not self.find_match_templates:
+            return
+        config = self.get_config()
+        server_url = config["server_url"].rstrip("/")
+        api_key = config.get("api_key", "")
+        if not api_key:
+            return
+
+        command = poll_pending_command(server_url, api_key)
+        if command == "find_match":
+            self._search_for_match(server_url, api_key)
+
+    def _wait_and_click(self, templates, status_text, deadline):
+        self._emit("status", text=status_text)
+        while time.monotonic() < deadline and not self._stop_flag.is_set():
+            location = find_button(templates)
+            if location is not None:
+                pyautogui.click(pyautogui.center(location))
+                return True
+            time.sleep(POLL_INTERVAL_SECONDS)
+        return False
+
+    def _search_for_match(self, server_url, api_key):
+        deadline = time.monotonic() + FIND_MATCH_TIMEOUT_SECONDS
+
+        # Шаг 1: из главного меню открыть вкладку "Играть" — кнопка "Найти
+        # игру" появляется только после неё, это отдельный экран.
+        if not self._wait_and_click(self.play_templates, "Ищу кнопку \"Играть\"...", deadline):
+            self._notify(
+                server_url, api_key,
+                "Не нашёл кнопку \"Играть\" — открой Dota 2 и зайди в главное меню, попробуй ещё раз.",
+            )
+            self._emit("status", text="Слежу за экраном...")
+            return
+
+        # Шаг 2: дождаться открытия вкладки и нажать "Найти игру".
+        if not self._wait_and_click(self.find_match_templates, "Ищу кнопку \"Найти игру\"...", deadline):
+            self._notify(
+                server_url, api_key,
+                "Нажал \"Играть\", но не нашёл кнопку \"Найти игру\" — попробуй запустить поиск вручную.",
+            )
+            self._emit("status", text="Слежу за экраном...")
+            return
+
+        self._notify(server_url, api_key, "🔍 Начал поиск игры.")
+        self._emit("status", text="Слежу за экраном...")
 
     def _handle_found(self, location):
         config = self.get_config()

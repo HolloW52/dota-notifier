@@ -13,7 +13,7 @@ from PIL import Image, ImageTk
 
 import monitor
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
 if getattr(sys, "frozen", False):
     APP_DIR = os.path.dirname(sys.executable)

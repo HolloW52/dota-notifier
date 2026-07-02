@@ -1,5 +1,6 @@
 import hmac
 import hashlib
+import json
 import os
 import time
 
@@ -17,6 +18,14 @@ SIGNING_KEY = TELEGRAM_BOT_TOKEN.encode()
 
 RATE_LIMIT_SECONDS = 3
 _last_notify_at = {}
+
+# Команды, ожидающие выполнения клиентом (например "найти игру" по кнопке из
+# Telegram). Как и остальное состояние сервера — только в памяти: теряется
+# при перезапуске на Render, но команда живёт секунды, пока клиент её не
+# заберёт следующим опросом, так что это не проблема.
+_pending_commands = {}
+
+FIND_MATCH_BUTTON_TEXT = "🔍 Найти игру"
 
 app = Flask(__name__)
 
@@ -39,12 +48,22 @@ def verify_api_key(api_key):
     return chat_id
 
 
-def send_telegram_message(chat_id, text):
+def send_telegram_message(chat_id, text, reply_markup=None):
+    data = {"chat_id": chat_id, "text": text}
+    if reply_markup is not None:
+        data["reply_markup"] = json.dumps(reply_markup)
     requests.post(
         f"{TELEGRAM_API_URL}/sendMessage",
-        data={"chat_id": chat_id, "text": text},
+        data=data,
         timeout=10,
     )
+
+
+def main_keyboard():
+    return {
+        "keyboard": [[{"text": FIND_MATCH_BUTTON_TEXT}]],
+        "resize_keyboard": True,
+    }
 
 
 @app.route("/health", methods=["GET"])
@@ -69,11 +88,29 @@ def telegram_webhook():
             "Привет! Вот твой персональный код для приложения Dota 2 Notifier:\n\n"
             f"{api_key}\n\n"
             "Вставь его в приложение при первом запуске.",
+            reply_markup=main_keyboard(),
+        )
+    elif text.strip() == FIND_MATCH_BUTTON_TEXT:
+        _pending_commands[str(chat_id)] = "find_match"
+        send_telegram_message(
+            chat_id,
+            "Принято — как только приложение на компьютере увидит главное меню Dota 2, начну поиск игры.",
         )
     else:
         send_telegram_message(chat_id, "Напиши /start, чтобы получить код для приложения.")
 
     return jsonify({"ok": True})
+
+
+@app.route("/poll-command", methods=["GET"])
+def poll_command():
+    api_key = request.args.get("api_key")
+    chat_id = verify_api_key(api_key) if api_key else None
+    if chat_id is None:
+        return jsonify({"ok": False, "error": "Неизвестный api_key"}), 404
+
+    command = _pending_commands.pop(chat_id, None)
+    return jsonify({"ok": True, "command": command})
 
 
 @app.route("/notify", methods=["POST"])
