@@ -48,10 +48,13 @@ def verify_api_key(api_key):
     return chat_id
 
 
-def send_telegram_message(chat_id, text, reply_markup=None):
+def send_telegram_message(chat_id, text, reply_markup=None, parse_mode=None):
     data = {"chat_id": chat_id, "text": text}
     if reply_markup is not None:
         data["reply_markup"] = json.dumps(reply_markup)
+    if parse_mode is not None:
+        data["parse_mode"] = parse_mode
+        data["disable_web_page_preview"] = True
     requests.post(
         f"{TELEGRAM_API_URL}/sendMessage",
         data=data,
@@ -64,6 +67,27 @@ def main_keyboard():
         "keyboard": [[{"text": FIND_MATCH_BUTTON_TEXT}]],
         "resize_keyboard": True,
     }
+
+
+def help_text():
+    return (
+        "🎮 <b>Dota 2 Notifier</b>\n\n"
+        "Я слежу за экраном твоего компьютера и пишу сюда, когда в Dota 2 "
+        "находится игра — а ещё умею сам нажать «Принять» за тебя.\n\n"
+        "<b>Как настроить (один раз):</b>\n"
+        "1. Скачай приложение: https://github.com/HolloW52/dota-notifier/releases/latest\n"
+        "2. Вставь свой персональный код в приложение на вкладке «Подключение» "
+        "(код выше, в сообщении от /start)\n"
+        "3. Запусти приложение и оставь его работать в фоне\n\n"
+        "<b>Что я умею:</b>\n"
+        f"• {FIND_MATCH_BUTTON_TEXT} — кнопка ниже запускает поиск матча прямо "
+        "из Telegram. Dota 2 должна быть уже открыта на главном меню.\n"
+        "• Уведомление, когда найдена игра.\n"
+        "• Автопринятие с задержкой — включается в самом приложении.\n\n"
+        "<b>Команды:</b>\n"
+        "/start — получить (или показать снова) персональный код\n"
+        "/help — показать эту инструкцию ещё раз"
+    )
 
 
 @app.route("/health", methods=["GET"])
@@ -81,15 +105,18 @@ def telegram_webhook():
     if chat_id is None:
         return jsonify({"ok": True})
 
-    if text.strip().lower().startswith("/start"):
+    command = text.strip().lower()
+
+    if command.startswith("/start"):
         api_key = make_api_key(chat_id)
         send_telegram_message(
             chat_id,
-            "Привет! Вот твой персональный код для приложения Dota 2 Notifier:\n\n"
-            f"{api_key}\n\n"
-            "Вставь его в приложение при первом запуске.",
+            f"Твой персональный код: <code>{api_key}</code>\n\n" + help_text(),
             reply_markup=main_keyboard(),
+            parse_mode="HTML",
         )
+    elif command.startswith("/help"):
+        send_telegram_message(chat_id, help_text(), reply_markup=main_keyboard(), parse_mode="HTML")
     elif text.strip() == FIND_MATCH_BUTTON_TEXT:
         _pending_commands[str(chat_id)] = "find_match"
         send_telegram_message(
@@ -97,7 +124,7 @@ def telegram_webhook():
             "Принято — как только приложение на компьютере увидит главное меню Dota 2, начну поиск игры.",
         )
     else:
-        send_telegram_message(chat_id, "Напиши /start, чтобы получить код для приложения.")
+        send_telegram_message(chat_id, "Не понял команду. Напиши /help, чтобы увидеть инструкцию.")
 
     return jsonify({"ok": True})
 
