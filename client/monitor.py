@@ -55,6 +55,10 @@ def load_find_match_templates():
     return load_image_templates(["find_match_button_ru.png", "find_match_button_en.png"])
 
 
+def load_find_match_disabled_templates():
+    return load_image_templates(["find_match_disabled_ru.png", "find_match_disabled_en.png"])
+
+
 def load_party_invite_templates():
     return load_image_templates(["party_invite_accept_ru.png", "party_invite_accept_en.png"])
 
@@ -153,6 +157,7 @@ class MonitorWorker(threading.Thread):
         self.templates = load_templates()
         self.play_templates = load_play_templates()
         self.find_match_templates = load_find_match_templates()
+        self.find_match_disabled_templates = load_find_match_disabled_templates()
         self.party_invite_templates = load_party_invite_templates()
         self.decline_templates = load_decline_templates()
         self.role_templates = load_role_templates()
@@ -259,17 +264,45 @@ class MonitorWorker(threading.Thread):
             self._emit("status", text="Слежу за экраном...")
             return
 
-        # Шаг 2: дождаться открытия вкладки и нажать "Найти игру".
-        if not self._wait_and_click(self.find_match_templates, "Ищу кнопку \"Найти игру\"...", deadline):
-            self._notify(
-                server_url, api_key,
-                "Нажал \"Играть\", но не нашёл кнопку \"Найти игру\" — попробуй запустить поиск вручную.",
-            )
-            self._emit("status", text="Слежу за экраном...")
-            return
+        # Шаг 2: дождаться открытия вкладки и нажать "Найти игру" — заодно
+        # следим за серой (неактивной) версией той же кнопки: Dota показывает
+        # её вместо зелёной, если для ролевого поиска не выбрано ни одной роли,
+        # и тогда зелёная кнопка вообще не появится, сколько ни жди.
+        self._emit("status", text="Ищу кнопку \"Найти игру\"...")
+        while time.monotonic() < deadline and not self._stop_flag.is_set():
+            location = find_button(self.find_match_templates)
+            if location is not None:
+                pyautogui.click(pyautogui.center(location))
+                self._notify(server_url, api_key, "🔍 Начал поиск игры.")
+                self._emit("status", text="Слежу за экраном...")
+                return
+            if find_button(self.find_match_disabled_templates) is not None:
+                self._notify(
+                    server_url, api_key,
+                    "⚠️ Роли не выбраны — сначала выбери роли (кнопка «🧭 Роли» в Telegram), потом жми «Начать игру».",
+                )
+                self._emit("status", text="Слежу за экраном...")
+                return
+            time.sleep(POLL_INTERVAL_SECONDS)
 
-        self._notify(server_url, api_key, "🔍 Начал поиск игры.")
+        self._notify(
+            server_url, api_key,
+            "Нажал \"Играть\", но не нашёл кнопку \"Найти игру\" — попробуй запустить поиск вручную.",
+        )
         self._emit("status", text="Слежу за экраном...")
+
+    def _find_role_state(self, key):
+        """(is_on, location) для роли — по тому, какой из двух шаблонов
+        (выбрана/не выбрана) сейчас совпал с экраном. location=None, если
+        строка роли вообще не видна (например, экран ещё не открыт)."""
+        templates = self.role_templates.get(key, {})
+        location = find_button(templates.get("on", []))
+        if location is not None:
+            return True, location
+        location = find_button(templates.get("off", []))
+        if location is not None:
+            return False, location
+        return None, None
 
     def _apply_roles(self, desired_roles, server_url, api_key):
         """Открывает экран "Играть" (где Dota показывает ролевой поиск) и
@@ -280,28 +313,50 @@ class MonitorWorker(threading.Thread):
             return
 
         desired = set(desired_roles)
-        deadline = time.monotonic() + FIND_MATCH_TIMEOUT_SECONDS
-        if not self._wait_and_click(self.play_templates, "Открываю выбор ролей...", deadline):
-            self._notify(server_url, api_key, "Не нашёл главное меню Dota 2 — открой игру и попробуй ещё раз.")
-            self._emit("status", text="Слежу за экраном...")
-            return
 
-        self._emit("status", text="Настраиваю роли...")
-        time.sleep(POLL_INTERVAL_SECONDS)  # дать панели ролей отрисоваться после клика
+        # Если панель ролей уже открыта (например, после предыдущей попытки) —
+        # не тратим время на повторный клик по "Играть" и ожидание вкладки.
+        already_open = any(self._find_role_state(key)[0] is not None for key in ROLE_KEYS)
+        if not already_open:
+            deadline = time.monotonic() + FIND_MATCH_TIMEOUT_SECONDS
+            if not self._wait_and_click(self.play_templates, "Открываю выбор ролей...", deadline):
+                self._notify(server_url, api_key, "Не нашёл главное меню Dota 2 — открой игру и попробуй ещё раз.")
+                self._emit("status", text="Слежу за экраном...")
+                return
+            self._emit("status", text="Настраиваю роли...")
+            time.sleep(POLL_INTERVAL_SECONDS)  # дать панели ролей отрисоваться после клика
 
+        failed = []
         for key in ROLE_KEYS:
-            templates = self.role_templates.get(key, {})
-            location = find_button(templates.get("on", []))
-            is_on = location is not None
-            if not is_on:
-                location = find_button(templates.get("off", []))
+            want_on = key in desired
+            is_on, location = self._find_role_state(key)
             if location is None:
+                continue  # роль не видна на экране — пропускаем, не гадаем
+            if is_on == want_on:
                 continue
-            if is_on != (key in desired):
-                pyautogui.click(pyautogui.center(location))
-                time.sleep(0.3)
 
-        self._notify(server_url, api_key, "✅ Роли обновлены.")
+            # Клик — по чекбоксу у левого края строки, а не по геометрическому
+            # центру шаблона: у коротких названий ("Центр", "Лёгкая") справа
+            # от текста в шаблоне остаётся пустой фон, и клик по нему Dota не
+            # засчитывает как выбор роли.
+            click_x = location.left + 15
+            click_y = location.top + location.height // 2
+
+            matched = False
+            for _ in range(3):
+                pyautogui.click(click_x, click_y)
+                time.sleep(0.4)
+                is_on, _ = self._find_role_state(key)
+                if is_on == want_on:
+                    matched = True
+                    break
+            if not matched:
+                failed.append(key)
+
+        if failed:
+            self._notify(server_url, api_key, f"⚠️ Не удалось применить часть ролей ({len(failed)}) — попробуй ещё раз.")
+        else:
+            self._notify(server_url, api_key, "✅ Роли обновлены.")
         self._emit("status", text="Слежу за экраном...")
 
     def _handle_found(self, location):
