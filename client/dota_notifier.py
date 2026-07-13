@@ -1,6 +1,7 @@
 import ctypes
 import datetime
 import json
+import math
 import os
 import queue
 import sys
@@ -39,11 +40,15 @@ CANCEL_COLOR_HOVER = "#bf4d4d"
 # интерфейс читался как единая система, а не набор случайных виджетов.
 ACCENT_COLOR = "#267340"
 
-# Цвета статус-пилюли на главной вкладке, по состоянию мониторинга.
+# Второй фирменный акцент — тёплое золото (руны/артефакты), чтобы приложение
+# не читалось как "тёмный фон + один зелёный", а как осознанная пара цветов.
+EMBER_COLOR = "#c9932f"
+
+# Цвета статус-полосы на главной вкладке, по состоянию мониторинга.
 STATUS_COLORS = {
     "idle": ACCENT_COLOR,
-    "working": "#d99a2b",
-    "alert": "#d99a2b",
+    "working": EMBER_COLOR,
+    "alert": EMBER_COLOR,
     "error": CANCEL_COLOR,
 }
 
@@ -51,6 +56,12 @@ MAIN_TAB_BG_IMAGE_SIZE = (420, 540)
 
 HERO_SIZE = (372, 92)
 HERO_SUPERSAMPLE = 3
+
+# Кольцо задержки — сигнатурный элемент вместо обычного слайдера: та же идея,
+# что и таймер принятия матча в самой Dota 2 (кольцо, а не полоса).
+RING_SIZE = 148
+RING_SUPERSAMPLE = 4
+RING_THICKNESS = 11
 
 # Окно принятия игры в Dota 2 — 30 секунд. Опрос экрана раз в секунду
 # добавляет до ~1 сек задержки на обнаружение, поэтому максимум выбора
@@ -149,7 +160,9 @@ def default_config():
         # это молча принимает ЛЮБОЕ приглашение в пати без разбора, кто зовёт —
         # осознанный выбор пользователя, не то, что должно включаться само.
         "auto_accept_party_invite": False,
-        "bg_color": "#1e1e1e",
+        # Тёмный с лёгким зелёным подтоном (не нейтральный серый) — фон и
+        # акцент читаются одной палитрой, а не "серое + зелёная наклейка".
+        "bg_color": "#141b17",
         "text_color": "#ffffff",
         "background_image_path": "",
         "font_family": DEFAULT_FONT_FAMILY,
@@ -194,7 +207,7 @@ class DotaNotifierApp(ctk.CTk):
 
         ctk.set_appearance_mode("dark")
         self.title(f"Dota 2 Notifier v{APP_VERSION}")
-        self.geometry("440x730")
+        self.geometry("440x800")
         self.resizable(False, False)
 
         self.tabview = ctk.CTkTabview(self, corner_radius=14)
@@ -255,6 +268,29 @@ class DotaNotifierApp(ctk.CTk):
             hover_color=CANCEL_COLOR_HOVER, text_color="#ffffff",
             corner_radius=8, command=command, **kwargs,
         )
+
+    @staticmethod
+    def _hairline(parent, panel_color):
+        ctk.CTkFrame(parent, fg_color=panel_shade(panel_color, amount=0.3), height=2, corner_radius=0).pack(fill="x", padx=14, pady=(2, 0))
+
+    def _add_toggle_row(self, parent, label_text, help_text, initial_value, command, panel_color):
+        text_color = self.config_data["text_color"]
+        row = ctk.CTkFrame(parent, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=14)
+        ctk.CTkLabel(row, text=label_text, font=self._font(14), text_color=text_color).pack(side="left")
+        self._make_help_button(row, help_text).pack(side="left", padx=(6, 0))
+        switch = ctk.CTkSwitch(
+            row, text="", progress_color=ACCENT_COLOR, button_color=text_color, button_hover_color=text_color,
+            command=command,
+            # bg_color задан явно: сквозь несколько вложенных "transparent"
+            # фреймов CTk иногда не может правильно определить, на каком
+            # фоне сглаживать скруглённые края — получаются чёрные пиксели
+            # по краям (тот же класс бага, что был у попапа справки).
+            bg_color=panel_color, width=46, height=24, switch_width=46, switch_height=24,
+        )
+        switch.pack(side="right")
+        (switch.select if initial_value else switch.deselect)()
+        return switch
 
     # ---------- Help-попапы ----------
 
@@ -410,6 +446,66 @@ class DotaNotifierApp(ctk.CTk):
 
         return img.resize(HERO_SIZE, Image.LANCZOS)
 
+    # ---------- Кольцо задержки (сигнатурный элемент) ----------
+
+    def _build_ring_image(self, seconds):
+        text_color = self.config_data["text_color"]
+        bg_color = self.config_data["bg_color"]
+        size = RING_SIZE * RING_SUPERSAMPLE
+        thickness = RING_THICKNESS * RING_SUPERSAMPLE
+        pad = thickness // 2 + 2 * RING_SUPERSAMPLE
+        bbox = [pad, pad, size - pad, size - pad]
+
+        img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        draw.ellipse(bbox, outline=hex_to_rgb(panel_shade(bg_color, amount=0.16)) + (255,), width=thickness)
+
+        fraction = seconds / MAX_DELAY_SECONDS
+        if fraction > 0:
+            # Кольцо растёт по часовой от 12 часов — так же читается таймер
+            # принятия матча в самой Dota 2.
+            draw.arc(bbox, start=-90, end=-90 + 360 * fraction, fill=hex_to_rgb(ACCENT_COLOR) + (255,), width=thickness)
+
+        number_font = load_display_font(int(38 * RING_SUPERSAMPLE))
+        label_font = load_display_font(int(12 * RING_SUPERSAMPLE), bold=False)
+        number_text = str(seconds)
+        label_text = "СЕК"
+
+        nb = draw.textbbox((0, 0), number_text, font=number_font)
+        lb = draw.textbbox((0, 0), label_text, font=label_font)
+        gap = 2 * RING_SUPERSAMPLE
+        nh, lh = nb[3] - nb[1], lb[3] - lb[1]
+        start_y = (size - (nh + gap + lh)) // 2
+
+        draw.text(
+            ((size - (nb[2] - nb[0])) / 2 - nb[0], start_y - nb[1]), number_text,
+            font=number_font, fill=hex_to_rgb(text_color) + (255,),
+        )
+        draw.text(
+            ((size - (lb[2] - lb[0])) / 2 - lb[0], start_y + nh + gap - lb[1]), label_text,
+            font=label_font, fill=hex_to_rgb(muted_text(text_color, bg_color)) + (255,),
+        )
+
+        return img.resize((RING_SIZE, RING_SIZE), Image.LANCZOS)
+
+    def _refresh_ring(self):
+        seconds = self.config_data.get("auto_accept_delay_seconds", 3)
+        self._ring_image_ref = ctk.CTkImage(light_image=self._build_ring_image(seconds), size=(RING_SIZE, RING_SIZE))
+        self.ring_label.configure(image=self._ring_image_ref)
+
+    def _on_ring_drag(self, event):
+        center = RING_SIZE / 2
+        dx, dy = event.x - center, -(event.y - center)
+        angle = math.degrees(math.atan2(dx, dy))
+        if angle < 0:
+            angle += 360
+        seconds = max(0, min(MAX_DELAY_SECONDS, round(angle / 360 * MAX_DELAY_SECONDS)))
+        if seconds != self.config_data.get("auto_accept_delay_seconds"):
+            self.config_data["auto_accept_delay_seconds"] = seconds
+            self._refresh_ring()
+            self._persist()
+
     # ---------- Главная вкладка ----------
 
     def _build_main_tab(self):
@@ -453,22 +549,26 @@ class DotaNotifierApp(ctk.CTk):
         self._hero_image_ref = ctk.CTkImage(light_image=self._build_hero_image(), size=HERO_SIZE)
         ctk.CTkLabel(content, image=self._hero_image_ref, text="").pack(padx=20, pady=(16, 0))
 
-        status_pill = ctk.CTkFrame(content, fg_color=panel_color, corner_radius=18, height=40)
-        status_pill.pack(pady=(16, 4), padx=20, fill="x")
-        status_pill.pack_propagate(False)
-        self.status_dot = ctk.CTkFrame(status_pill, width=10, height=10, corner_radius=5, fg_color=ACCENT_COLOR)
-        self.status_dot.pack(side="left", padx=(16, 10))
+        # Статус: не "чип"-пилюля, а полоса с цветным рельсом слева — тот же
+        # смысл, менее шаблонный вид. Точка мигает на состоянии "слежу".
+        status_row = ctk.CTkFrame(content, fg_color=panel_color, corner_radius=8, height=38)
+        status_row.pack(pady=(16, 4), padx=20, fill="x")
+        status_row.pack_propagate(False)
+        ctk.CTkFrame(status_row, fg_color=ACCENT_COLOR, width=3, corner_radius=0).pack(side="left", fill="y")
+        self.status_dot = ctk.CTkFrame(status_row, width=9, height=9, corner_radius=4, fg_color=ACCENT_COLOR)
+        self.status_dot.pack(side="left", padx=(14, 10))
         self.status_text_label = ctk.CTkLabel(
-            status_pill, text="Запуск...", font=self._font(14, weight="normal"), text_color=text_color,
+            status_row, text="Запуск...", font=self._font(14, weight="normal"), text_color=text_color,
         )
         self.status_text_label.pack(side="left")
+        self._pulse_tick = 0
 
         ctk.CTkLabel(
             content, text="ЖУРНАЛ СОБЫТИЙ", font=self._font(11),
             text_color=muted_text(text_color, bg_color),
         ).pack(anchor="w", padx=22, pady=(14, 4))
         self.log_box = ctk.CTkTextbox(
-            content, height=142, corner_radius=10,
+            content, height=110, corner_radius=10,
             fg_color=panel_color, text_color=text_color, font=self._font(13, weight="normal"),
         )
         self.log_box.pack(fill="x", padx=20)
@@ -482,78 +582,47 @@ class DotaNotifierApp(ctk.CTk):
         self.cancel_button = self._danger_button(self.countdown_frame, "Отмена", self._on_cancel_countdown)
         self.cancel_button.pack(pady=(0, 10))
 
-        auto_accept_card = ctk.CTkFrame(content, fg_color=panel_color, corner_radius=10)
-        auto_accept_card.pack(fill="x", padx=20, pady=(16, 8))
+        # Одна панель с настройками вместо трёх одинаковых карточек подряд —
+        # разделы отделены тонкой линией, а не своими рамками у каждого.
+        control_card = ctk.CTkFrame(content, fg_color=panel_color, corner_radius=10)
+        control_card.pack(fill="x", padx=20, pady=(16, 16))
 
-        switch_row = ctk.CTkFrame(auto_accept_card, fg_color="transparent")
-        switch_row.pack(fill="x", padx=14, pady=14)
-        ctk.CTkLabel(switch_row, text="🔁 Автопринятие игры", font=self._font(14), text_color=text_color).pack(side="left")
-        self._make_help_button(
-            switch_row,
+        self.auto_accept_switch = self._add_toggle_row(
+            control_card, "🔁 Автопринятие игры",
             "Может работать нестабильно в полноэкранном режиме (Fullscreen) — "
             "в настройках видео Dota 2 выбери \"Оконный безрамочный\" режим.",
-        ).pack(side="left", padx=(6, 0))
-        self.auto_accept_switch = ctk.CTkSwitch(
-            switch_row, text="", progress_color=ACCENT_COLOR, button_color=text_color,
-            button_hover_color=text_color, command=self._on_toggle_auto_accept,
-            # bg_color задан явно: сквозь несколько вложенных "transparent"
-            # фреймов CTk иногда не может правильно определить, на каком
-            # фоне сглаживать скруглённые края — получаются чёрные пиксели
-            # по краям (тот же класс бага, что был у попапа справки).
-            bg_color=panel_color, width=46, height=24, switch_width=46, switch_height=24,
+            self.config_data.get("auto_accept", True), self._on_toggle_auto_accept, panel_color,
         )
-        self.auto_accept_switch.pack(side="right")
-        if self.config_data.get("auto_accept", True):
-            self.auto_accept_switch.select()
-        else:
-            self.auto_accept_switch.deselect()
 
-        delay_card = ctk.CTkFrame(content, fg_color=panel_color, corner_radius=10)
-        delay_card.pack(fill="x", padx=20, pady=(8, 16))
+        self._hairline(control_card, panel_color)
 
-        delay_header_row = ctk.CTkFrame(delay_card, fg_color="transparent")
-        delay_header_row.pack(fill="x", padx=14, pady=(14, 6))
-        ctk.CTkLabel(delay_header_row, text="⏱ Задержка автопринятия", font=self._font(14), text_color=text_color).pack(side="left")
+        delay_title_row = ctk.CTkFrame(control_card, fg_color="transparent")
+        delay_title_row.pack(fill="x", padx=14, pady=(12, 0))
+        ctk.CTkLabel(delay_title_row, text="⏱ Задержка автопринятия", font=self._font(14), text_color=text_color).pack(side="left")
         self._make_help_button(
-            delay_header_row,
-            f"Максимум {MAX_DELAY_SECONDS} сек — в Dota 2 всего 30 сек на принятие игры, остальное запас на надёжность.",
+            delay_title_row,
+            f"Максимум {MAX_DELAY_SECONDS} сек — в Dota 2 всего 30 сек на принятие игры, остальное запас на надёжность. "
+            "Потяни за кольцо, чтобы изменить.",
         ).pack(side="left", padx=(6, 0))
-        self.delay_value_label = ctk.CTkLabel(
-            delay_header_row,
-            text=f"{self.config_data.get('auto_accept_delay_seconds', 3)} сек",
-            font=self._font(14), text_color=ACCENT_COLOR,
-        )
-        self.delay_value_label.pack(side="right")
-        self.delay_slider = ctk.CTkSlider(
-            delay_card, from_=0, to=MAX_DELAY_SECONDS, number_of_steps=MAX_DELAY_SECONDS,
-            progress_color=ACCENT_COLOR, button_color=text_color, button_hover_color=text_color,
-            command=self._on_delay_change,
-        )
-        self.delay_slider.set(self.config_data.get("auto_accept_delay_seconds", 3))
-        self.delay_slider.pack(fill="x", padx=14, pady=(0, 14))
 
-        party_card = ctk.CTkFrame(content, fg_color=panel_color, corner_radius=10)
-        party_card.pack(fill="x", padx=20, pady=(0, 16))
+        self._ring_image_ref = ctk.CTkImage(
+            light_image=self._build_ring_image(self.config_data.get("auto_accept_delay_seconds", 3)),
+            size=(RING_SIZE, RING_SIZE),
+        )
+        self.ring_label = ctk.CTkLabel(control_card, image=self._ring_image_ref, text="", cursor="hand2")
+        self.ring_label.pack(pady=(4, 12))
+        self.ring_label.bind("<Button-1>", self._on_ring_drag)
+        self.ring_label.bind("<B1-Motion>", self._on_ring_drag)
 
-        party_row = ctk.CTkFrame(party_card, fg_color="transparent")
-        party_row.pack(fill="x", padx=14, pady=14)
-        ctk.CTkLabel(party_row, text="🎉 Автопринятие в пати", font=self._font(14), text_color=text_color).pack(side="left")
-        self._make_help_button(
-            party_row,
+        self._hairline(control_card, panel_color)
+
+        self.party_invite_switch = self._add_toggle_row(
+            control_card, "🎉 Автопринятие в пати",
             "Автоматически принимает ЛЮБОЕ приглашение в пати от друзей в Dota 2, "
             "не дожидаясь тебя за компьютером. Не различает, кто именно зовёт — "
             "включай, только если это не проблема.",
-        ).pack(side="left", padx=(6, 0))
-        self.party_invite_switch = ctk.CTkSwitch(
-            party_row, text="", progress_color=ACCENT_COLOR, button_color=text_color,
-            button_hover_color=text_color, command=self._on_toggle_party_invite,
-            bg_color=panel_color, width=46, height=24, switch_width=46, switch_height=24,
+            self.config_data.get("auto_accept_party_invite", False), self._on_toggle_party_invite, panel_color,
         )
-        self.party_invite_switch.pack(side="right")
-        if self.config_data.get("auto_accept_party_invite", False):
-            self.party_invite_switch.select()
-        else:
-            self.party_invite_switch.deselect()
 
     # ---------- Вкладка "Подключение" ----------
 
@@ -604,19 +673,23 @@ class DotaNotifierApp(ctk.CTk):
         container = ctk.CTkFrame(self.appearance_tab, fg_color=panel_color, corner_radius=14)
         container.pack(fill="both", expand=True, padx=16, pady=16)
 
-        ctk.CTkLabel(container, text="🎨 Цвет фона", font=self._font(14), text_color=text_color).pack(anchor="w", padx=20, pady=(20, 6))
+        ctk.CTkLabel(container, text="🎨 Цвет фона", font=self._font(14), text_color=text_color).pack(anchor="w", padx=20, pady=(18, 8))
         row1 = ctk.CTkFrame(container, fg_color="transparent")
-        row1.pack(fill="x", padx=20)
+        row1.pack(fill="x", padx=20, pady=(0, 18))
         ctk.CTkFrame(row1, fg_color=bg_color, width=44, height=32, corner_radius=8, border_width=2, border_color=ACCENT_COLOR).pack(side="left")
         self._secondary_button(row1, "Выбрать цвет фона", self._on_pick_bg_color).pack(side="left", padx=(10, 0))
 
-        ctk.CTkLabel(container, text="🖋 Цвет текста", font=self._font(14), text_color=text_color).pack(anchor="w", padx=20, pady=(20, 6))
+        self._hairline(container, panel_color)
+
+        ctk.CTkLabel(container, text="🖋 Цвет текста", font=self._font(14), text_color=text_color).pack(anchor="w", padx=20, pady=(18, 8))
         row2 = ctk.CTkFrame(container, fg_color="transparent")
-        row2.pack(fill="x", padx=20)
+        row2.pack(fill="x", padx=20, pady=(0, 18))
         ctk.CTkFrame(row2, fg_color=text_color, width=44, height=32, corner_radius=8, border_width=2, border_color=ACCENT_COLOR).pack(side="left")
         self._secondary_button(row2, "Выбрать цвет текста", self._on_pick_text_color).pack(side="left", padx=(10, 0))
 
-        ctk.CTkLabel(container, text="🔤 Шрифт", font=self._font(14), text_color=text_color).pack(anchor="w", padx=20, pady=(20, 6))
+        self._hairline(container, panel_color)
+
+        ctk.CTkLabel(container, text="🔤 Шрифт", font=self._font(14), text_color=text_color).pack(anchor="w", padx=20, pady=(18, 8))
         self.font_menu = ctk.CTkOptionMenu(
             container, values=FONT_CHOICES, font=self._font(13), corner_radius=8,
             fg_color=panel_shade(bg_color, amount=0.16), button_color=panel_shade(bg_color, amount=0.26),
@@ -625,15 +698,17 @@ class DotaNotifierApp(ctk.CTk):
             dropdown_font=self._font(13), command=self._on_pick_font,
         )
         self.font_menu.set(self.config_data.get("font_family", DEFAULT_FONT_FAMILY))
-        self.font_menu.pack(anchor="w", padx=20)
+        self.font_menu.pack(anchor="w", padx=20, pady=(0, 18))
+
+        self._hairline(container, panel_color)
 
         ctk.CTkLabel(
             container, text="🖼 Фоновая картинка", font=self._font(14), text_color=text_color,
-        ).pack(anchor="w", padx=20, pady=(28, 2))
+        ).pack(anchor="w", padx=20, pady=(18, 2))
         ctk.CTkLabel(
             container, text="показывается на вкладке «Главная»", font=self._font(12, weight="normal"),
             text_color=muted_text(text_color, bg_color),
-        ).pack(anchor="w", padx=20, pady=(0, 6))
+        ).pack(anchor="w", padx=20, pady=(0, 8))
         row3 = ctk.CTkFrame(container, fg_color="transparent")
         row3.pack(fill="x", padx=20)
         self._secondary_button(row3, "Выбрать фото...", self._on_pick_background_image).pack(side="left")
@@ -643,11 +718,11 @@ class DotaNotifierApp(ctk.CTk):
         ctk.CTkLabel(
             container, text=f"Текущая: {current_image}", font=self._font(12, weight="normal"),
             text_color=muted_text(text_color, bg_color), wraplength=380, justify="left",
-        ).pack(anchor="w", padx=20, pady=(8, 4))
+        ).pack(anchor="w", padx=20, pady=(8, 18))
 
         self._danger_button(
             container, "↺ Сбросить оформление по умолчанию", self._on_reset_appearance,
-        ).pack(anchor="w", padx=20, pady=(28, 10))
+        ).pack(anchor="w", padx=20, pady=(4, 20))
 
     def _apply_icon(self):
         # iconphoto() с PNG задаёт только "маленькую" иконку (заголовок
@@ -747,12 +822,6 @@ class DotaNotifierApp(ctk.CTk):
         self.config_data["auto_accept_party_invite"] = bool(self.party_invite_switch.get())
         self._persist()
 
-    def _on_delay_change(self, value):
-        seconds = int(round(value))
-        self.config_data["auto_accept_delay_seconds"] = seconds
-        self.delay_value_label.configure(text=f"{seconds} сек")
-        self._persist()
-
     def _on_save_api_key(self):
         api_key = self.api_key_entry.get().strip().strip("﻿")
         self.config_data["api_key"] = api_key
@@ -778,6 +847,7 @@ class DotaNotifierApp(ctk.CTk):
 
     def _set_status(self, text, state="idle"):
         self.status_text_label.configure(text=text)
+        self._status_state = state
         self.status_dot.configure(fg_color=STATUS_COLORS.get(state, ACCENT_COLOR))
 
     @staticmethod
@@ -793,7 +863,17 @@ class DotaNotifierApp(ctk.CTk):
                 self._handle_event(event)
         except queue.Empty:
             pass
+        self._pulse_status_dot()
         self.after(150, self._poll_queue)
+
+    def _pulse_status_dot(self):
+        # Лёгкое "дыхание" точки статуса на состоянии "слежу" — приложение
+        # реально сканирует экран, точка не должна выглядеть мёртвой.
+        if getattr(self, "_status_state", "idle") != "idle":
+            return
+        self._pulse_tick += 1
+        t = (math.sin(self._pulse_tick * 0.25) + 1) / 2
+        self.status_dot.configure(fg_color=blend(ACCENT_COLOR, self.config_data["bg_color"], t * 0.5))
 
     def _handle_event(self, event):
         etype = event["type"]
