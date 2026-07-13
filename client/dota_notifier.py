@@ -35,16 +35,14 @@ DEFAULT_SERVER_URL = "https://dota-notifier.onrender.com"
 CANCEL_COLOR = "#a13d3d"
 CANCEL_COLOR_HOVER = "#bf4d4d"
 
-# Зелёный из иконки приложения — основной акцент бренда: шапка, переключатели,
-# слайдер, активная вкладка, основные кнопки — всё в одном цвете, чтобы
-# интерфейс читался как единая система, а не набор случайных виджетов.
+# Зелёный из иконки приложения — основной акцент бренда.
 ACCENT_COLOR = "#267340"
 
 # Второй фирменный акцент — тёплое золото (руны/артефакты), чтобы приложение
 # не читалось как "тёмный фон + один зелёный", а как осознанная пара цветов.
 EMBER_COLOR = "#c9932f"
 
-# Цвета статус-полосы на главной вкладке, по состоянию мониторинга.
+# Цвета точки статуса, по состоянию мониторинга.
 STATUS_COLORS = {
     "idle": ACCENT_COLOR,
     "working": EMBER_COLOR,
@@ -52,16 +50,23 @@ STATUS_COLORS = {
     "error": CANCEL_COLOR,
 }
 
-MAIN_TAB_BG_IMAGE_SIZE = (420, 540)
-
-HERO_SIZE = (372, 92)
-HERO_SUPERSAMPLE = 3
+# Раскладка: слева узкая панель навигации (вместо шаблонного tab-bar сверху),
+# справа контент активного раздела.
+WINDOW_SIZE = (560, 720)
+RAIL_WIDTH = 64
+CONTENT_BG_IMAGE_SIZE = (WINDOW_SIZE[0] - RAIL_WIDTH, WINDOW_SIZE[1])
 
 # Кольцо задержки — сигнатурный элемент вместо обычного слайдера: та же идея,
 # что и таймер принятия матча в самой Dota 2 (кольцо, а не полоса).
-RING_SIZE = 148
+RING_SIZE = 170
 RING_SUPERSAMPLE = 4
-RING_THICKNESS = 11
+RING_THICKNESS = 12
+# Внизу кольца оставлена "мёртвая зона" — иначе 0 и максимум физически
+# соприкасаются в одной точке (12 часов), и случайное дрожание руки рядом с
+# ней перескакивает между 0 и максимумом. Как у обычной ручки громкости.
+RING_GAP_DEGREES = 60
+RING_START_ANGLE = 180 + RING_GAP_DEGREES / 2
+RING_SWEEP_DEGREES = 360 - RING_GAP_DEGREES
 
 # Окно принятия игры в Dota 2 — 30 секунд. Опрос экрана раз в секунду
 # добавляет до ~1 сек задержки на обнаружение, поэтому максимум выбора
@@ -74,6 +79,8 @@ MAX_DELAY_SECONDS = 25
 # размере (22px) сглаживание "на лету" читается как размытость.
 HELP_BADGE_SIZE = 22
 HELP_BADGE_SUPERSAMPLE = 8
+
+NAV_ICON_SIZE = 22
 
 
 def hex_to_rgb(hex_color):
@@ -114,9 +121,8 @@ def muted_text(text_color, bg_color, amount=0.45):
 
 
 def load_display_font(size, bold=True):
-    """Шрифт для баннера-шапки — фиксированный, не зависит от выбора
-    пользователя на вкладке "Оформление" (там настраивается шрифт обычных
-    надписей, а не логотипа), как и сама иконка приложения."""
+    """Шрифт для запечённых картинок (кольцо, значок справки) — фиксированный,
+    не зависит от выбора пользователя на вкладке "Оформление"."""
     names = ("segoeuib.ttf", "arialbd.ttf", "arial.ttf") if bold else ("segoeui.ttf", "arial.ttf")
     for name in names:
         try:
@@ -201,29 +207,23 @@ class DotaNotifierApp(ctk.CTk):
         self.event_queue = queue.Queue()
         self.tray_icon = None
         self._bg_image_ref = None
-        self._hero_image_ref = None
         self._help_popup = None
         self._help_popup_owner = None
+        self.current_section = "main"
+        self.nav_buttons = {}
 
         ctk.set_appearance_mode("dark")
         self.title(f"Dota 2 Notifier v{APP_VERSION}")
-        self.geometry("440x800")
+        self.geometry(f"{WINDOW_SIZE[0]}x{WINDOW_SIZE[1]}")
         self.resizable(False, False)
-
-        self.tabview = ctk.CTkTabview(self, corner_radius=14)
-        self.tabview.pack(fill="both", expand=True, padx=8, pady=8)
-        self.main_tab = self.tabview.add("Главная")
-        self.connect_tab = self.tabview.add("Подключение")
-        self.appearance_tab = self.tabview.add("Оформление")
-        self.tabview.set("Главная")
 
         self._help_badge_image = ctk.CTkImage(
             light_image=self._build_help_badge_image(), size=(HELP_BADGE_SIZE, HELP_BADGE_SIZE),
         )
+        self._nav_icon_image = self._load_nav_icon_image()
 
-        self._build_main_tab()
-        self._build_connect_tab()
-        self._build_appearance_tab()
+        self._build_shell()
+        self._show_section("main")
         self._apply_window_colors()
         self._apply_icon()
 
@@ -242,6 +242,68 @@ class DotaNotifierApp(ctk.CTk):
     @staticmethod
     def _lighten_accent():
         return panel_shade(ACCENT_COLOR, amount=0.25)
+
+    def _load_nav_icon_image(self):
+        icon_path = os.path.join(BUNDLE_DIR, "tray_icon.png")
+        if not os.path.isfile(icon_path):
+            return None
+        try:
+            return ctk.CTkImage(light_image=Image.open(icon_path), size=(28, 28))
+        except Exception:
+            return None
+
+    # ---------- Каркас: боковая панель навигации + область контента ----------
+
+    def _build_shell(self):
+        bg_color = self.config_data["bg_color"]
+        rail_color = blend(bg_color, "#000000", 0.35)
+
+        self.rail = ctk.CTkFrame(self, width=RAIL_WIDTH, corner_radius=0, fg_color=rail_color)
+        self.rail.pack(side="left", fill="y")
+        self.rail.pack_propagate(False)
+
+        if self._nav_icon_image is not None:
+            ctk.CTkLabel(self.rail, image=self._nav_icon_image, text="").pack(pady=(20, 24))
+        else:
+            ctk.CTkLabel(self.rail, text="N", font=self._font(20), text_color=ACCENT_COLOR).pack(pady=(20, 24))
+
+        nav_items = [
+            ("main", "📡", "Главная"),
+            ("connect", "🔑", "Подключение"),
+            ("appearance", "🎨", "Оформление"),
+        ]
+        for key, glyph, tooltip in nav_items:
+            btn = ctk.CTkButton(
+                self.rail, text=glyph, width=44, height=44, corner_radius=12,
+                font=self._font(18), fg_color="transparent", text_color="#ffffff",
+                hover_color=panel_shade(rail_color, amount=0.2),
+                command=lambda k=key: self._show_section(k),
+            )
+            btn.pack(pady=6)
+            self.nav_buttons[key] = btn
+
+        self.content_area = ctk.CTkFrame(self, corner_radius=0, fg_color=bg_color)
+        self.content_area.pack(side="left", fill="both", expand=True)
+
+    def _refresh_nav_highlight(self):
+        bg_color = self.config_data["bg_color"]
+        rail_color = blend(bg_color, "#000000", 0.35)
+        for key, btn in self.nav_buttons.items():
+            active = key == self.current_section
+            btn.configure(fg_color=ACCENT_COLOR if active else "transparent")
+            if not active:
+                btn.configure(hover_color=panel_shade(rail_color, amount=0.2))
+
+    def _show_section(self, section):
+        self.current_section = section
+        for child in self.content_area.winfo_children():
+            child.destroy()
+        {
+            "main": self._build_main_section,
+            "connect": self._build_connect_section,
+            "appearance": self._build_appearance_section,
+        }[section]()
+        self._refresh_nav_highlight()
 
     # ---------- Кнопки: единый визуальный язык (primary/secondary/danger) ----------
 
@@ -389,64 +451,12 @@ class DotaNotifierApp(ctk.CTk):
                 pass
         self._close_help_popup()
 
-    # ---------- Баннер-шапка ----------
-
-    def _build_hero_image(self):
-        text_color = self.config_data["text_color"]
-        w, h = HERO_SIZE[0] * HERO_SUPERSAMPLE, HERO_SIZE[1] * HERO_SUPERSAMPLE
-        img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(img)
-
-        # Диагональный градиент "тёмный акцент -> яркий акцент" — фирменный
-        # цвет приложения, а не выбранный пользователем bg_color, чтобы шапка
-        # всегда узнаваемо зелёная, как иконка, независимо от темы.
-        top_rgb = hex_to_rgb(blend(ACCENT_COLOR, "#000000", 0.45))
-        bottom_rgb = hex_to_rgb(ACCENT_COLOR)
-        for y in range(h):
-            t = y / h
-            r = round(top_rgb[0] + (bottom_rgb[0] - top_rgb[0]) * t)
-            g = round(top_rgb[1] + (bottom_rgb[1] - top_rgb[1]) * t)
-            b = round(top_rgb[2] + (bottom_rgb[2] - top_rgb[2]) * t)
-            draw.line([(0, y), (w, y)], fill=(r, g, b, 255))
-
-        mask = Image.new("L", (w, h), 0)
-        ImageDraw.Draw(mask).rounded_rectangle([0, 0, w - 1, h - 1], radius=16 * HERO_SUPERSAMPLE, fill=255)
-        img.putalpha(mask)
-
-        icon_path = os.path.join(BUNDLE_DIR, "tray_icon.png")
-        text_x = 24 * HERO_SUPERSAMPLE
-        if os.path.isfile(icon_path):
-            try:
-                icon_size = 46 * HERO_SUPERSAMPLE
-                icon = Image.open(icon_path).convert("RGBA").resize((icon_size, icon_size), Image.LANCZOS)
-                icon_x = 22 * HERO_SUPERSAMPLE
-                icon_y = (h - icon_size) // 2
-                img.paste(icon, (icon_x, icon_y), icon)
-                text_x = icon_x + icon_size + 16 * HERO_SUPERSAMPLE
-            except Exception:
-                pass
-
-        title_font = load_display_font(30 * HERO_SUPERSAMPLE)
-        subtitle_font = load_display_font(14 * HERO_SUPERSAMPLE, bold=False)
-        subtitle_rgb = hex_to_rgb(blend(text_color, ACCENT_COLOR, 0.2))
-
-        title_bbox = draw.textbbox((0, 0), "DOTA 2", font=title_font)
-        subtitle_text = "N O T I F I E R"
-        subtitle_bbox = draw.textbbox((0, 0), subtitle_text, font=subtitle_font)
-        gap = 6 * HERO_SUPERSAMPLE
-        title_h = title_bbox[3] - title_bbox[1]
-        subtitle_h = subtitle_bbox[3] - subtitle_bbox[1]
-        start_y = (h - (title_h + gap + subtitle_h)) // 2
-
-        draw.text((text_x, start_y - title_bbox[1]), "DOTA 2", font=title_font, fill=hex_to_rgb(text_color) + (255,))
-        draw.text(
-            (text_x, start_y + title_h + gap - subtitle_bbox[1]), subtitle_text,
-            font=subtitle_font, fill=subtitle_rgb + (255,),
-        )
-
-        return img.resize(HERO_SIZE, Image.LANCZOS)
-
     # ---------- Кольцо задержки (сигнатурный элемент) ----------
+
+    @staticmethod
+    def _ring_to_pil_angle(clock_angle):
+        # Наша система: 0° = 12 часов, по часовой. PIL: 0° = 3 часа, по часовой.
+        return clock_angle - 90
 
     def _build_ring_image(self, seconds):
         text_color = self.config_data["text_color"]
@@ -459,22 +469,27 @@ class DotaNotifierApp(ctk.CTk):
         img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        draw.ellipse(bbox, outline=hex_to_rgb(panel_shade(bg_color, amount=0.16)) + (255,), width=thickness)
+        track_start = self._ring_to_pil_angle(RING_START_ANGLE)
+        draw.arc(
+            bbox, start=track_start, end=track_start + RING_SWEEP_DEGREES,
+            fill=hex_to_rgb(panel_shade(bg_color, amount=0.16)) + (255,), width=thickness,
+        )
 
         fraction = seconds / MAX_DELAY_SECONDS
         if fraction > 0:
-            # Кольцо растёт по часовой от 12 часов — так же читается таймер
-            # принятия матча в самой Dota 2.
-            draw.arc(bbox, start=-90, end=-90 + 360 * fraction, fill=hex_to_rgb(ACCENT_COLOR) + (255,), width=thickness)
+            draw.arc(
+                bbox, start=track_start, end=track_start + RING_SWEEP_DEGREES * fraction,
+                fill=hex_to_rgb(ACCENT_COLOR) + (255,), width=thickness,
+            )
 
-        number_font = load_display_font(int(38 * RING_SUPERSAMPLE))
-        label_font = load_display_font(int(12 * RING_SUPERSAMPLE), bold=False)
+        number_font = load_display_font(int(42 * RING_SUPERSAMPLE))
+        label_font = load_display_font(int(13 * RING_SUPERSAMPLE), bold=False)
         number_text = str(seconds)
         label_text = "СЕК"
 
         nb = draw.textbbox((0, 0), number_text, font=number_font)
         lb = draw.textbbox((0, 0), label_text, font=label_font)
-        gap = 2 * RING_SUPERSAMPLE
+        gap = 3 * RING_SUPERSAMPLE
         nh, lh = nb[3] - nb[1], lb[3] - lb[1]
         start_y = (size - (nh + gap + lh)) // 2
 
@@ -497,40 +512,47 @@ class DotaNotifierApp(ctk.CTk):
     def _on_ring_drag(self, event):
         center = RING_SIZE / 2
         dx, dy = event.x - center, -(event.y - center)
-        angle = math.degrees(math.atan2(dx, dy))
-        if angle < 0:
-            angle += 360
-        seconds = max(0, min(MAX_DELAY_SECONDS, round(angle / 360 * MAX_DELAY_SECONDS)))
+        clock_angle = math.degrees(math.atan2(dx, dy))
+        if clock_angle < 0:
+            clock_angle += 360
+
+        relative = (clock_angle - RING_START_ANGLE) % 360
+        if relative <= RING_SWEEP_DEGREES:
+            seconds = round(relative / RING_SWEEP_DEGREES * MAX_DELAY_SECONDS)
+        else:
+            # Мёртвая зона внизу кольца — прилипаем к ближайшему концу, а не
+            # к тому, что попадётся по формуле угла.
+            dist_to_end = relative - RING_SWEEP_DEGREES
+            dist_to_start = 360 - relative
+            seconds = MAX_DELAY_SECONDS if dist_to_end <= dist_to_start else 0
+
         if seconds != self.config_data.get("auto_accept_delay_seconds"):
             self.config_data["auto_accept_delay_seconds"] = seconds
             self._refresh_ring()
             self._persist()
 
-    # ---------- Главная вкладка ----------
+    # ---------- Раздел "Главная" ----------
 
-    def _build_main_tab(self):
-        for child in self.main_tab.winfo_children():
-            child.destroy()
-
+    def _build_main_section(self):
         bg_color = self.config_data["bg_color"]
         text_color = self.config_data["text_color"]
         panel_color = panel_shade(bg_color)
         bg_image_path = self.config_data.get("background_image_path", "")
         has_bg_image = bool(bg_image_path) and os.path.isfile(bg_image_path)
 
-        self.main_tab.configure(fg_color=bg_color)
-        content_master = self.main_tab
+        self.content_area.configure(fg_color=bg_color)
+        content_master = self.content_area
 
         if has_bg_image:
             try:
-                pil_image = Image.open(bg_image_path).convert("RGB").resize(MAIN_TAB_BG_IMAGE_SIZE)
+                pil_image = Image.open(bg_image_path).convert("RGB").resize(CONTENT_BG_IMAGE_SIZE)
                 self._bg_image_ref = ImageTk.PhotoImage(pil_image)
                 # Виджеты CTk не умеют по-настоящему "просвечивать" сквозь
                 # друг друга — fg_color="transparent" просто подделывает цвет
                 # родителя. Чтобы реально показать картинку под виджетами,
                 # используем стандартный приём Tkinter: рисуем её на Canvas,
-                # а содержимое вкладки встраиваем поверх через create_window.
-                bg_canvas = ctk.CTkCanvas(self.main_tab, highlightthickness=0)
+                # а содержимое встраиваем поверх через create_window.
+                bg_canvas = ctk.CTkCanvas(self.content_area, highlightthickness=0)
                 bg_canvas.place(x=0, y=0, relwidth=1, relheight=1)
                 bg_canvas.create_image(0, 0, anchor="nw", image=self._bg_image_ref)
                 content_master = bg_canvas
@@ -541,38 +563,47 @@ class DotaNotifierApp(ctk.CTk):
         if has_bg_image:
             content_master.create_window(
                 (0, 0), window=content, anchor="nw",
-                width=MAIN_TAB_BG_IMAGE_SIZE[0], height=MAIN_TAB_BG_IMAGE_SIZE[1],
+                width=CONTENT_BG_IMAGE_SIZE[0], height=CONTENT_BG_IMAGE_SIZE[1],
             )
         else:
             content.place(relx=0, rely=0, relwidth=1, relheight=1)
 
-        self._hero_image_ref = ctk.CTkImage(light_image=self._build_hero_image(), size=HERO_SIZE)
-        ctk.CTkLabel(content, image=self._hero_image_ref, text="").pack(padx=20, pady=(16, 0))
-
-        # Статус: не "чип"-пилюля, а полоса с цветным рельсом слева — тот же
-        # смысл, менее шаблонный вид. Точка мигает на состоянии "слежу".
+        # Статус: полоса с цветным рельсом слева, точка "дышит" на состоянии
+        # "слежу" — приложение реально сканирует экран, не должно выглядеть мёртвым.
         status_row = ctk.CTkFrame(content, fg_color=panel_color, corner_radius=8, height=38)
-        status_row.pack(pady=(16, 4), padx=20, fill="x")
+        status_row.pack(pady=(20, 18), padx=24, fill="x")
         status_row.pack_propagate(False)
         ctk.CTkFrame(status_row, fg_color=ACCENT_COLOR, width=3, corner_radius=0).pack(side="left", fill="y")
         self.status_dot = ctk.CTkFrame(status_row, width=9, height=9, corner_radius=4, fg_color=ACCENT_COLOR)
         self.status_dot.pack(side="left", padx=(14, 10))
         self.status_text_label = ctk.CTkLabel(
-            status_row, text="Запуск...", font=self._font(14, weight="normal"), text_color=text_color,
+            status_row, text=getattr(self, "_status_text", "Запуск..."), font=self._font(14, weight="normal"), text_color=text_color,
         )
         self.status_text_label.pack(side="left")
+        self.status_dot.configure(fg_color=STATUS_COLORS.get(getattr(self, "_status_state", "idle"), ACCENT_COLOR))
         self._pulse_tick = 0
 
-        ctk.CTkLabel(
-            content, text="ЖУРНАЛ СОБЫТИЙ", font=self._font(11),
-            text_color=muted_text(text_color, bg_color),
-        ).pack(anchor="w", padx=22, pady=(14, 4))
-        self.log_box = ctk.CTkTextbox(
-            content, height=110, corner_radius=10,
-            fg_color=panel_color, text_color=text_color, font=self._font(13, weight="normal"),
+        # Кольцо — центральный элемент экрана, не запертый в карточку: висит
+        # прямо на фоне, как настоящий диск-регулятор, а не виджет в списке.
+        ring_wrap = ctk.CTkFrame(content, fg_color="transparent")
+        ring_wrap.pack(pady=(4, 4))
+        title_row = ctk.CTkFrame(ring_wrap, fg_color="transparent")
+        title_row.pack()
+        ctk.CTkLabel(title_row, text="⏱ ЗАДЕРЖКА АВТОПРИНЯТИЯ", font=self._font(11), text_color=muted_text(text_color, bg_color)).pack(side="left")
+        self._make_help_button(
+            title_row,
+            f"Максимум {MAX_DELAY_SECONDS} сек — в Dota 2 всего 30 сек на принятие игры, остальное запас на "
+            "надёжность. Потяни за кольцо, чтобы изменить.",
+        ).pack(side="left", padx=(6, 0))
+
+        self._ring_image_ref = ctk.CTkImage(
+            light_image=self._build_ring_image(self.config_data.get("auto_accept_delay_seconds", 3)),
+            size=(RING_SIZE, RING_SIZE),
         )
-        self.log_box.pack(fill="x", padx=20)
-        self.log_box.configure(state="disabled")
+        self.ring_label = ctk.CTkLabel(ring_wrap, image=self._ring_image_ref, text="", cursor="hand2")
+        self.ring_label.pack(pady=(10, 0))
+        self.ring_label.bind("<Button-1>", self._on_ring_drag)
+        self.ring_label.bind("<B1-Motion>", self._on_ring_drag)
 
         self.countdown_frame = ctk.CTkFrame(content, fg_color=panel_color, corner_radius=10)
         self.countdown_label = ctk.CTkLabel(
@@ -582,74 +613,58 @@ class DotaNotifierApp(ctk.CTk):
         self.cancel_button = self._danger_button(self.countdown_frame, "Отмена", self._on_cancel_countdown)
         self.cancel_button.pack(pady=(0, 10))
 
-        # Одна панель с настройками вместо трёх одинаковых карточек подряд —
-        # разделы отделены тонкой линией, а не своими рамками у каждого.
-        control_card = ctk.CTkFrame(content, fg_color=panel_color, corner_radius=10)
-        control_card.pack(fill="x", padx=20, pady=(16, 16))
+        toggle_card = ctk.CTkFrame(content, fg_color=panel_color, corner_radius=10)
+        toggle_card.pack(fill="x", padx=24, pady=(20, 16))
 
         self.auto_accept_switch = self._add_toggle_row(
-            control_card, "🔁 Автопринятие игры",
+            toggle_card, "🔁 Автопринятие игры",
             "Может работать нестабильно в полноэкранном режиме (Fullscreen) — "
             "в настройках видео Dota 2 выбери \"Оконный безрамочный\" режим.",
             self.config_data.get("auto_accept", True), self._on_toggle_auto_accept, panel_color,
         )
-
-        self._hairline(control_card, panel_color)
-
-        delay_title_row = ctk.CTkFrame(control_card, fg_color="transparent")
-        delay_title_row.pack(fill="x", padx=14, pady=(12, 0))
-        ctk.CTkLabel(delay_title_row, text="⏱ Задержка автопринятия", font=self._font(14), text_color=text_color).pack(side="left")
-        self._make_help_button(
-            delay_title_row,
-            f"Максимум {MAX_DELAY_SECONDS} сек — в Dota 2 всего 30 сек на принятие игры, остальное запас на надёжность. "
-            "Потяни за кольцо, чтобы изменить.",
-        ).pack(side="left", padx=(6, 0))
-
-        self._ring_image_ref = ctk.CTkImage(
-            light_image=self._build_ring_image(self.config_data.get("auto_accept_delay_seconds", 3)),
-            size=(RING_SIZE, RING_SIZE),
-        )
-        self.ring_label = ctk.CTkLabel(control_card, image=self._ring_image_ref, text="", cursor="hand2")
-        self.ring_label.pack(pady=(4, 12))
-        self.ring_label.bind("<Button-1>", self._on_ring_drag)
-        self.ring_label.bind("<B1-Motion>", self._on_ring_drag)
-
-        self._hairline(control_card, panel_color)
-
+        self._hairline(toggle_card, panel_color)
         self.party_invite_switch = self._add_toggle_row(
-            control_card, "🎉 Автопринятие в пати",
+            toggle_card, "🎉 Автопринятие в пати",
             "Автоматически принимает ЛЮБОЕ приглашение в пати от друзей в Dota 2, "
             "не дожидаясь тебя за компьютером. Не различает, кто именно зовёт — "
             "включай, только если это не проблема.",
             self.config_data.get("auto_accept_party_invite", False), self._on_toggle_party_invite, panel_color,
         )
 
-    # ---------- Вкладка "Подключение" ----------
+        ctk.CTkLabel(
+            content, text="ЖУРНАЛ СОБЫТИЙ", font=self._font(11),
+            text_color=muted_text(text_color, bg_color),
+        ).pack(anchor="w", padx=26, pady=(0, 4))
+        self.log_box = ctk.CTkTextbox(
+            content, height=110, corner_radius=10,
+            fg_color=panel_color, text_color=text_color, font=("Consolas", 12),
+        )
+        self.log_box.pack(fill="both", expand=True, padx=24, pady=(0, 20))
+        self.log_box.configure(state="disabled")
 
-    def _build_connect_tab(self):
-        for child in self.connect_tab.winfo_children():
-            child.destroy()
+    # ---------- Раздел "Подключение" ----------
 
+    def _build_connect_section(self):
         bg_color = self.config_data["bg_color"]
         text_color = self.config_data["text_color"]
         panel_color = panel_shade(bg_color)
 
-        self.connect_tab.configure(fg_color=bg_color)
-        container = ctk.CTkFrame(self.connect_tab, fg_color=panel_color, corner_radius=14)
-        container.pack(fill="both", expand=True, padx=16, pady=16)
+        self.content_area.configure(fg_color=bg_color)
+        container = ctk.CTkFrame(self.content_area, fg_color=panel_color, corner_radius=14)
+        container.pack(fill="both", expand=True, padx=24, pady=24)
 
         ctk.CTkLabel(
             container, text="🔑 Код подключения", font=self._font(18), text_color=text_color,
-        ).pack(anchor="w", padx=20, pady=(24, 4))
+        ).pack(anchor="w", padx=24, pady=(28, 4))
         ctk.CTkLabel(
             container,
             text="Напиши /start боту @dota2_notify_bot в Telegram, он пришлёт код — вставь его сюда.",
             font=self._font(13, weight="normal"), text_color=muted_text(text_color, bg_color),
             wraplength=380, justify="left",
-        ).pack(anchor="w", padx=20, pady=(0, 14))
+        ).pack(anchor="w", padx=24, pady=(0, 14))
 
         entry_row = ctk.CTkFrame(container, fg_color="transparent")
-        entry_row.pack(fill="x", padx=20)
+        entry_row.pack(fill="x", padx=24)
         self.api_key_entry = ctk.CTkEntry(
             entry_row, placeholder_text="Вставь код сюда", font=self._font(13, weight="normal"),
             corner_radius=8, border_color=panel_shade(bg_color, amount=0.32),
@@ -659,21 +674,18 @@ class DotaNotifierApp(ctk.CTk):
             self.api_key_entry.insert(0, self.config_data["api_key"])
         self._primary_button(entry_row, "OK", self._on_save_api_key, width=50).pack(side="left", padx=(8, 0))
 
-    # ---------- Вкладка "Оформление" ----------
+    # ---------- Раздел "Оформление" ----------
 
-    def _build_appearance_tab(self):
-        for child in self.appearance_tab.winfo_children():
-            child.destroy()
-
+    def _build_appearance_section(self):
         bg_color = self.config_data["bg_color"]
         text_color = self.config_data["text_color"]
         panel_color = panel_shade(bg_color)
 
-        self.appearance_tab.configure(fg_color=bg_color)
-        container = ctk.CTkFrame(self.appearance_tab, fg_color=panel_color, corner_radius=14)
-        container.pack(fill="both", expand=True, padx=16, pady=16)
+        self.content_area.configure(fg_color=bg_color)
+        container = ctk.CTkFrame(self.content_area, fg_color=panel_color, corner_radius=14)
+        container.pack(fill="both", expand=True, padx=24, pady=24)
 
-        ctk.CTkLabel(container, text="🎨 Цвет фона", font=self._font(14), text_color=text_color).pack(anchor="w", padx=20, pady=(18, 8))
+        ctk.CTkLabel(container, text="🎨 Цвет фона", font=self._font(14), text_color=text_color).pack(anchor="w", padx=20, pady=(20, 8))
         row1 = ctk.CTkFrame(container, fg_color="transparent")
         row1.pack(fill="x", padx=20, pady=(0, 18))
         ctk.CTkFrame(row1, fg_color=bg_color, width=44, height=32, corner_radius=8, border_width=2, border_color=ACCENT_COLOR).pack(side="left")
@@ -747,22 +759,15 @@ class DotaNotifierApp(ctk.CTk):
 
     def _apply_window_colors(self):
         bg_color = self.config_data["bg_color"]
-        text_color = self.config_data["text_color"]
+        rail_color = blend(bg_color, "#000000", 0.35)
         self.configure(fg_color=bg_color)
-        self.tabview.configure(
-            fg_color=bg_color, text_color=text_color,
-            segmented_button_fg_color=panel_shade(bg_color, amount=0.08),
-            segmented_button_selected_color=ACCENT_COLOR,
-            segmented_button_selected_hover_color=self._lighten_accent(),
-            segmented_button_unselected_color=panel_shade(bg_color, amount=0.08),
-            segmented_button_unselected_hover_color=panel_shade(bg_color, amount=0.16),
-        )
+        self.rail.configure(fg_color=rail_color)
+        self.content_area.configure(fg_color=bg_color)
+        self._refresh_nav_highlight()
 
     def _refresh_theme(self):
-        self._build_main_tab()
-        self._build_connect_tab()
-        self._build_appearance_tab()
         self._apply_window_colors()
+        self._show_section(self.current_section)
 
     # ---------- Оформление: обработчики ----------
 
@@ -835,10 +840,11 @@ class DotaNotifierApp(ctk.CTk):
 
     def _log(self, text):
         line = f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {text}"
-        self.log_box.configure(state="normal")
-        self.log_box.insert("end", line + "\n")
-        self.log_box.see("end")
-        self.log_box.configure(state="disabled")
+        if self.current_section == "main":
+            self.log_box.configure(state="normal")
+            self.log_box.insert("end", line + "\n")
+            self.log_box.see("end")
+            self.log_box.configure(state="disabled")
         try:
             with open(LOG_PATH, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
@@ -846,9 +852,11 @@ class DotaNotifierApp(ctk.CTk):
             pass
 
     def _set_status(self, text, state="idle"):
-        self.status_text_label.configure(text=text)
         self._status_state = state
-        self.status_dot.configure(fg_color=STATUS_COLORS.get(state, ACCENT_COLOR))
+        self._status_text = text
+        if self.current_section == "main":
+            self.status_text_label.configure(text=text)
+            self.status_dot.configure(fg_color=STATUS_COLORS.get(state, ACCENT_COLOR))
 
     @staticmethod
     def _status_state_for_text(text):
@@ -869,9 +877,9 @@ class DotaNotifierApp(ctk.CTk):
     def _pulse_status_dot(self):
         # Лёгкое "дыхание" точки статуса на состоянии "слежу" — приложение
         # реально сканирует экран, точка не должна выглядеть мёртвой.
-        if getattr(self, "_status_state", "idle") != "idle":
+        if self.current_section != "main" or getattr(self, "_status_state", "idle") != "idle":
             return
-        self._pulse_tick += 1
+        self._pulse_tick = getattr(self, "_pulse_tick", 0) + 1
         t = (math.sin(self._pulse_tick * 0.25) + 1) / 2
         self.status_dot.configure(fg_color=blend(ACCENT_COLOR, self.config_data["bg_color"], t * 0.5))
 
@@ -884,16 +892,20 @@ class DotaNotifierApp(ctk.CTk):
             self._set_status("ИГРА НАЙДЕНА!", state="alert")
             self._log("Найдена игра!")
         elif etype == "countdown_start":
-            self.countdown_frame.pack(fill="x", padx=20, pady=(4, 0))
-            self.countdown_label.configure(text=f"Автопринятие через {event['seconds']} сек")
+            if self.current_section == "main":
+                self.countdown_frame.pack(fill="x", padx=24, pady=(4, 0))
+                self.countdown_label.configure(text=f"Автопринятие через {event['seconds']} сек")
         elif etype == "countdown_tick":
-            self.countdown_label.configure(text=f"Автопринятие через {event['seconds_left']} сек")
+            if self.current_section == "main":
+                self.countdown_label.configure(text=f"Автопринятие через {event['seconds_left']} сек")
         elif etype == "countdown_cancelled":
-            self.countdown_frame.pack_forget()
+            if self.current_section == "main":
+                self.countdown_frame.pack_forget()
             self._set_status("Слежу за экраном...", state="idle")
             self._log("Автопринятие отменено.")
         elif etype == "accepted":
-            self.countdown_frame.pack_forget()
+            if self.current_section == "main":
+                self.countdown_frame.pack_forget()
             self._set_status("Слежу за экраном...", state="idle")
             self._log("Принято автоматически.")
         elif etype == "error":
