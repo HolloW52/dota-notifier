@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "dota_notifier",
+  "project_id": "39275568-8eaf-432d-bfd5-143342eaa35a"
+}
