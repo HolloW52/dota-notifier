@@ -54,7 +54,7 @@ python dota_notifier.py
 ```bash
 python -m PyInstaller --onefile --windowed --name DotaNotifier --icon app_icon.ico ^
   --add-data "accept_button_ru.png;." --add-data "accept_button_en.png;." ^
-  --add-data "play_button_ru.png;." --add-data "find_match_button_ru.png;." ^
+  --add-data "play_button_ru.png;." --add-data "find_match_button_ru.png;." --add-data "find_match_disabled_ru.png;." ^
   --add-data "party_invite_accept_ru.png;." --add-data "decline_game_ru.png;." ^
   --add-data "role_carry_on_ru.png;." --add-data "role_carry_off_ru.png;." ^
   --add-data "role_mid_on_ru.png;." --add-data "role_mid_off_ru.png;." ^
