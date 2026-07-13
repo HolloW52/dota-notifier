@@ -4,6 +4,7 @@
   "auto_accept": true,
   "auto_accept_delay_seconds": 3,
   "auto_accept_party_invite": false,
+  "confirm_before_accept": false,
   "bg_color": "#141b17",
   "text_color": "#ffffff",
   "background_image_path": "",

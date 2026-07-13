@@ -25,7 +25,25 @@ _last_notify_at = {}
 # заберёт следующим опросом, так что это не проблема.
 _pending_commands = {}
 
+# Роли, которые пользователь сейчас выбирает в открытом инлайн-меню "Роли"
+# (chat_id -> set ключей ролей) — живёт, пока меню открыто.
+_role_selection = {}
+
+# Решение "принять/отклонить" по найденной игре, ждущее, пока клиент его
+# заберёт опросом (см. /ask-decision, /poll-decision).
+_pending_decisions = {}
+
 FIND_MATCH_BUTTON_TEXT = "🔍 Найти игру"
+ROLES_BUTTON_TEXT = "🧭 Роли"
+
+ROLES = [
+    ("carry", "Лёгкая"),
+    ("mid", "Центр"),
+    ("offlane", "Сложная"),
+    ("support", "Поддержка"),
+    ("hard_support", "Полная поддержка"),
+]
+ROLE_LABELS = dict(ROLES)
 
 app = Flask(__name__)
 
@@ -62,11 +80,44 @@ def send_telegram_message(chat_id, text, reply_markup=None, parse_mode=None):
     )
 
 
+def answer_callback_query(callback_id, text=None):
+    data = {"callback_query_id": callback_id}
+    if text:
+        data["text"] = text
+    requests.post(f"{TELEGRAM_API_URL}/answerCallbackQuery", data=data, timeout=10)
+
+
+def edit_message_text(chat_id, message_id, text):
+    requests.post(
+        f"{TELEGRAM_API_URL}/editMessageText",
+        data={"chat_id": chat_id, "message_id": message_id, "text": text},
+        timeout=10,
+    )
+
+
+def edit_message_reply_markup(chat_id, message_id, reply_markup):
+    requests.post(
+        f"{TELEGRAM_API_URL}/editMessageReplyMarkup",
+        data={"chat_id": chat_id, "message_id": message_id, "reply_markup": json.dumps(reply_markup)},
+        timeout=10,
+    )
+
+
 def main_keyboard():
     return {
-        "keyboard": [[{"text": FIND_MATCH_BUTTON_TEXT}]],
+        "keyboard": [[{"text": FIND_MATCH_BUTTON_TEXT}], [{"text": ROLES_BUTTON_TEXT}]],
         "resize_keyboard": True,
     }
+
+
+def roles_inline_keyboard(chat_id):
+    selected = _role_selection.get(str(chat_id), set())
+    rows = [
+        [{"text": f"{'✅' if key in selected else '▫️'} {label}", "callback_data": f"role:{key}"}]
+        for key, label in ROLES
+    ]
+    rows.append([{"text": "Готово", "callback_data": "role:done"}])
+    return {"inline_keyboard": rows}
 
 
 def help_text():
@@ -82,8 +133,10 @@ def help_text():
         "<b>Что я умею:</b>\n"
         f"• {FIND_MATCH_BUTTON_TEXT} — кнопка ниже запускает поиск матча прямо "
         "из Telegram. Dota 2 должна быть уже открыта на главном меню.\n"
+        f"• {ROLES_BUTTON_TEXT} — выбрать роли для ролевого поиска, можно поменять в любой момент.\n"
         "• Уведомление, когда найдена игра.\n"
-        "• Автопринятие с задержкой — включается в самом приложении.\n\n"
+        "• Автопринятие с задержкой или подтверждение прямо здесь, в Telegram — "
+        "включается в самом приложении.\n\n"
         "<b>Команды:</b>\n"
         "/start — получить (или показать снова) персональный код\n"
         "/help — показать эту инструкцию ещё раз"
@@ -98,6 +151,12 @@ def health():
 @app.route("/telegram-webhook", methods=["POST"])
 def telegram_webhook():
     update = request.get_json(silent=True) or {}
+
+    callback = update.get("callback_query")
+    if callback:
+        handle_callback_query(callback)
+        return jsonify({"ok": True})
+
     message = update.get("message", {})
     text = message.get("text", "")
     chat_id = message.get("chat", {}).get("id")
@@ -118,15 +177,62 @@ def telegram_webhook():
     elif command.startswith("/help"):
         send_telegram_message(chat_id, help_text(), reply_markup=main_keyboard(), parse_mode="HTML")
     elif text.strip() == FIND_MATCH_BUTTON_TEXT:
-        _pending_commands[str(chat_id)] = "find_match"
+        _pending_commands[str(chat_id)] = {"type": "find_match"}
         send_telegram_message(
             chat_id,
             "Принято — как только приложение на компьютере увидит главное меню Dota 2, начну поиск игры.",
+        )
+    elif text.strip() == ROLES_BUTTON_TEXT:
+        send_telegram_message(
+            chat_id,
+            "Выбери роли для ролевого поиска (можно несколько), потом жми «Готово»:",
+            reply_markup=roles_inline_keyboard(chat_id),
         )
     else:
         send_telegram_message(chat_id, "Не понял команду. Напиши /help, чтобы увидеть инструкцию.")
 
     return jsonify({"ok": True})
+
+
+def handle_callback_query(callback):
+    chat_id = callback.get("message", {}).get("chat", {}).get("id")
+    message_id = callback.get("message", {}).get("message_id")
+    data = callback.get("data", "")
+    callback_id = callback.get("id")
+
+    if chat_id is None or callback_id is None:
+        return
+
+    if data.startswith("role:"):
+        key = data.split(":", 1)[1]
+        selected = _role_selection.setdefault(str(chat_id), set())
+
+        if key == "done":
+            if not selected:
+                answer_callback_query(callback_id, "Выбери хотя бы одну роль.")
+                return
+            _pending_commands[str(chat_id)] = {"type": "set_roles", "roles": sorted(selected)}
+            answer_callback_query(callback_id, "Применяю в игре...")
+            edit_message_text(chat_id, message_id, "Роли обновлены, применяю в Dota — жди сообщения о готовности.")
+            return
+
+        if key not in ROLE_LABELS:
+            answer_callback_query(callback_id)
+            return
+
+        if key in selected:
+            selected.discard(key)
+        else:
+            selected.add(key)
+        answer_callback_query(callback_id)
+        edit_message_reply_markup(chat_id, message_id, roles_inline_keyboard(chat_id))
+        return
+
+    if data.startswith("decision:"):
+        decision = data.split(":", 1)[1]
+        _pending_decisions[str(chat_id)] = decision
+        answer_callback_query(callback_id)
+        edit_message_text(chat_id, message_id, "✅ Принято." if decision == "accept" else "❌ Отклонено.")
 
 
 @app.route("/poll-command", methods=["GET"])
@@ -138,6 +244,40 @@ def poll_command():
 
     command = _pending_commands.pop(chat_id, None)
     return jsonify({"ok": True, "command": command})
+
+
+@app.route("/ask-decision", methods=["POST"])
+def ask_decision():
+    data = request.get_json(silent=True) or {}
+    api_key = data.get("api_key")
+    chat_id = verify_api_key(api_key) if api_key else None
+    if chat_id is None:
+        return jsonify({"ok": False, "error": "Неизвестный api_key"}), 404
+
+    title = data.get("title") or "Игра найдена"
+    _pending_decisions.pop(chat_id, None)
+    send_telegram_message(
+        chat_id,
+        f"🎮 {title}\nПринять или отклонить?",
+        reply_markup={
+            "inline_keyboard": [[
+                {"text": "✅ Принять", "callback_data": "decision:accept"},
+                {"text": "❌ Отклонить", "callback_data": "decision:decline"},
+            ]]
+        },
+    )
+    return jsonify({"ok": True})
+
+
+@app.route("/poll-decision", methods=["GET"])
+def poll_decision():
+    api_key = request.args.get("api_key")
+    chat_id = verify_api_key(api_key) if api_key else None
+    if chat_id is None:
+        return jsonify({"ok": False, "error": "Неизвестный api_key"}), 404
+
+    decision = _pending_decisions.pop(chat_id, None)
+    return jsonify({"ok": True, "decision": decision})
 
 
 @app.route("/notify", methods=["POST"])

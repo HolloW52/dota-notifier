@@ -166,6 +166,10 @@ def default_config():
         # это молча принимает ЛЮБОЕ приглашение в пати без разбора, кто зовёт —
         # осознанный выбор пользователя, не то, что должно включаться само.
         "auto_accept_party_invite": False,
+        # Выключено по умолчанию: пока выключено, поведение как раньше —
+        # авто-принятие с задержкой (или просто уведомление). Включённый
+        # тумблер заменяет автоклик на вопрос "принять/отклонить" в Telegram.
+        "confirm_before_accept": False,
         # Тёмный с лёгким зелёным подтоном (не нейтральный серый) — фон и
         # акцент читаются одной палитрой, а не "серое + зелёная наклейка".
         "bg_color": "#141b17",
@@ -630,6 +634,14 @@ class DotaNotifierApp(ctk.CTk):
             "включай, только если это не проблема.",
             self.config_data.get("auto_accept_party_invite", False), self._on_toggle_party_invite, panel_color,
         )
+        self._hairline(toggle_card, panel_color)
+        self.confirm_before_accept_switch = self._add_toggle_row(
+            toggle_card, "📲 Подтверждать в Telegram",
+            "Вместо автопринятия — когда найдётся игра, бот спросит в Telegram "
+            "«Принять» или «Отклонить» и подождёт твоего ответа. Заменяет "
+            "кольцо задержки и обычное автопринятие, пока включено.",
+            self.config_data.get("confirm_before_accept", False), self._on_toggle_confirm_before_accept, panel_color,
+        )
 
         ctk.CTkLabel(
             content, text="ЖУРНАЛ СОБЫТИЙ", font=self._font(11),
@@ -825,6 +837,10 @@ class DotaNotifierApp(ctk.CTk):
 
     def _on_toggle_party_invite(self):
         self.config_data["auto_accept_party_invite"] = bool(self.party_invite_switch.get())
+        self._persist()
+
+    def _on_toggle_confirm_before_accept(self):
+        self.config_data["confirm_before_accept"] = bool(self.confirm_before_accept_switch.get())
         self._persist()
 
     def _on_save_api_key(self):
